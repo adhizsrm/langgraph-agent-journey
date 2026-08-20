@@ -28,7 +28,24 @@ def calculator(a: float, b: float, operation: str) -> float:
     elif operation == "divide": return a / b
     return 0.0
 
-llm_with_tools = llm.bind_tools([calculator])
+@tool
+def get_product_price(product_name: str) -> float:
+    """Fetches the current price of a product from the database catalog. Use this to find prices before calculating."""
+    catalog = {
+        "laptop": 1200.0,
+        "mouse": 25.0,
+        "keyboard": 75.0,
+        "monitor": 300.0
+    }
+    # Return the real price, or 0.0 if not found
+    return catalog.get(product_name.lower().strip(), 0.0)
+
+# We now bind MULTIPLE tools to the LLM
+tools_list = [calculator, get_product_price]
+llm_with_tools = llm.bind_tools(tools_list)
+
+# A simple lookup dictionary for our node to use dynamically
+tools_map = {t.name: t for t in tools_list}
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
@@ -46,9 +63,12 @@ def execute_tool(state: AgentState):
     
     results = []
     for tool_call in last_message.tool_calls:
-        print(f"Executing local tool: {tool_call['name']}({tool_call['args']})")
-        if tool_call["name"] == "calculator":
-            tool_msg = calculator.invoke(tool_call)
+        print(f"Executing: {tool_call['name']}({tool_call['args']})")
+        
+        # Dynamically find the tool based on the name the LLM requested
+        selected_tool = tools_map.get(tool_call["name"])
+        if selected_tool:
+            tool_msg = selected_tool.invoke(tool_call)
             results.append(tool_msg)
             
     return {"messages": results}
@@ -76,21 +96,20 @@ def build_graph():
     return workflow.compile()
 
 def main():
-    print("Building Goal-Oriented LangGraph application...\n")
+    print("Building Multi-Tool Agent LangGraph...\n")
     app = build_graph()
     
-    # We introduce a SystemMessage to enforce goal-oriented behavior
-    system_prompt = SystemMessage(content='''You are a goal-oriented calculation agent. 
-When given a goal, figure out the steps required.
-Use the calculator tool to compute values one by one or in batches.
-Review your progress after every calculation to see if the goal is completely achieved.
+    system_prompt = SystemMessage(content='''You are a goal-oriented AI agent.
+When given a goal involving products, first look up their prices.
+Then, calculate the total required.
 Only stop and provide a final answer when the entire goal has been fully achieved.
 ''')
 
+    # The user provided the exact example from their prompt:
     user_goal = HumanMessage(content='''Goal: Calculate the total cost of:
-- 2 coffees at 150 each
-- 3 sandwiches at 120 each
-- 1 cake at 500''')
+- 1 Laptop
+- 2 Mice (Mouse)
+- 1 Keyboard''')
 
     initial_state = {
         "messages": [system_prompt, user_goal]
