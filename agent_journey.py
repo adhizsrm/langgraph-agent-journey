@@ -1,11 +1,12 @@
 import os
 from dotenv import load_dotenv
-from typing import Annotated
-from typing_extensions import TypedDict
 
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from typing import Annotated
+from typing_extensions import TypedDict
 
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
@@ -44,7 +45,6 @@ def execute_tool(state: AgentState):
     last_message = messages[-1]
     
     results = []
-    # Loop over all requested tool calls
     for tool_call in last_message.tool_calls:
         print(f"Executing local tool: {tool_call['name']}({tool_call['args']})")
         if tool_call["name"] == "calculator":
@@ -53,57 +53,56 @@ def execute_tool(state: AgentState):
             
     return {"messages": results}
 
-# 3. CONDITIONAL ROUTING: Here is the logic that decides what to do next
 def should_continue(state: AgentState) -> str:
-    """Evaluate the state and return the name of the next node to visit."""
     messages = state["messages"]
     last_message = messages[-1]
     
-    # If the LLM makes a tool call, route to the "tool" node
     if hasattr(last_message, 'tool_calls') and len(last_message.tool_calls) > 0:
-        print(">> [ROUTER] Tool needed -> Routing to 'tool'")
+        print(">> [ROUTER] Agent requested tool(s) -> Routing to 'tool'")
         return "tool"
     
-    # Otherwise, the LLM is done thinking and wrote a final answer
-    print(">> [ROUTER] No tool needed -> Routing to END")
+    print(">> [ROUTER] Goal Complete -> Routing to END")
     return END
 
 def build_graph():
     workflow = StateGraph(AgentState)
-    
     workflow.add_node("agent", call_model)
     workflow.add_node("tool", execute_tool)
     
-    # Main flow
     workflow.add_edge(START, "agent")
-    workflow.add_edge("tool", "agent")  # After tool runs, obviously return to agent
-    
-    # Conditional Flow
-    # After "agent" runs, call 'should_continue' to decide where to go next
-    workflow.add_conditional_edges(
-        "agent",          # The node we are deciding FROM
-        should_continue,  # The routing function
-        # Mapping the string output of routing function to a destination node
-        {
-            "tool": "tool",
-            END: END
-        }
-    )
+    workflow.add_edge("tool", "agent")
+    workflow.add_conditional_edges("agent", should_continue, {"tool": "tool", END: END})
     
     return workflow.compile()
 
 def main():
-    print("Building LangGraph application with conditional routing...\n")
+    print("Building Goal-Oriented LangGraph application...\n")
     app = build_graph()
     
-    print("Prompting agent...\n")
+    # We introduce a SystemMessage to enforce goal-oriented behavior
+    system_prompt = SystemMessage(content='''You are a goal-oriented calculation agent. 
+When given a goal, figure out the steps required.
+Use the calculator tool to compute values one by one or in batches.
+Review your progress after every calculation to see if the goal is completely achieved.
+Only stop and provide a final answer when the entire goal has been fully achieved.
+''')
+
+    user_goal = HumanMessage(content='''Goal: Calculate the total cost of:
+- 2 coffees at 150 each
+- 3 sandwiches at 120 each
+- 1 cake at 500''')
+
     initial_state = {
-        "messages": [HumanMessage(content="Calculate 15 multiplied by 7 using the calculator tool")]
+        "messages": [system_prompt, user_goal]
     }
+    
+    print("Assigning Goal:")
+    print(user_goal.content)
+    print("\nStarting execution loop...\n")
     
     final_state = app.invoke(initial_state)
     
-    print("\n--- Final Output ---")
+    print("\n--- Final Deliverable ---")
     print(final_state["messages"][-1].content)
 
 if __name__ == "__main__":
