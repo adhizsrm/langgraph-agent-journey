@@ -28,21 +28,6 @@ I wanted to learn LangGraph the way I actually learn best: build the smallest po
 | 14+ | Integrate LangGraph agent with RAG as a callable tool |
 | 15 | End-to-end testing, regression testing, full documentation |
 
-### Build log (dates)
-
-- **18 Aug** — Phases 1–4: Python fundamentals, State/Nodes/Edges/Conditional Edges
-- **19 Aug** — Goal-oriented single agent (multi-step goals, tools, state)
-- **20 Aug** — Evaluation and completion checks (retry/failure handling)
-- **21 Aug** — Multiple specialist agents, each with a defined responsibility
-- **22 Aug** — Testing, debugging, documentation, regression pass
-- **23 Aug** — Buffer/catch-up day
-- **24 Aug** — Orchestrator/delegator agent
-- **25 Aug** — Programmatic agent creation from agent definitions
-- **26 Aug** — Code-ownership proof of concept (frontend/backend/db/testing agents)
-- **27 Aug** — Define communication boundary with existing TS/React RAG app
-- **28 Aug** — Integrate LangGraph agent with RAG as a tool
-- **29 Aug** — End-to-end + regression testing, final documentation
-
 ## Project structure
 
 ```
