@@ -1,8 +1,17 @@
 import os
+from pprint import pprint
 from dotenv import load_dotenv
+
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
+
+from typing import Annotated
+from typing_extensions import TypedDict
+
+# LangGraph specific imports
+from langgraph.graph.message import add_messages
+from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
 
@@ -10,62 +19,88 @@ api_key = os.getenv("OPENROUTER_API_KEY")
 base_url = os.getenv("OPENROUTER_BASE_URL")
 model = os.getenv("OPENROUTER_MODEL")
 
-# Define a simple deterministic tool
+llm = ChatOpenAI(base_url=base_url, api_key=api_key, model=model)
+
 @tool
 def calculator(a: float, b: float, operation: str) -> float:
     """Performs basic arithmetic operations: add, subtract, multiply, divide."""
-    if operation == "add":
-        return a + b
-    elif operation == "subtract":
-        return a - b
-    elif operation == "multiply":
-        return a * b
-    elif operation == "divide":
-        if b == 0:
-            return "Cannot divide by zero"
-        return a / b
-    else:
-        return "Unknown operation"
+    if operation == "add": return a + b
+    elif operation == "subtract": return a - b
+    elif operation == "multiply": return a * b
+    elif operation == "divide": return a / b
+    return 0.0
+
+llm_with_tools = llm.bind_tools([calculator])
+
+# 1. STATE: define the minimum state required by LangGraph
+class AgentState(TypedDict):
+    # `add_messages` automatically appends new messages to the existing list
+    messages: Annotated[list, add_messages]
+
+# 2. NODES: discrete execution steps
+def call_model(state: AgentState):
+    print("--- [NODE] call_model ---")
+    messages = state["messages"]
+    response = llm_with_tools.invoke(messages)
+    
+    # LangGraph will append this response to the state using `add_messages`
+    return {"messages": [response]}
+
+def execute_tool(state: AgentState):
+    print("--- [NODE] execute_tool ---")
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    # For this phase, we hardcode knowing there's a tool call requested
+    tool_call = last_message.tool_calls[0]
+    print(f"Executing local tool: {tool_call['name']}...")
+    
+    # Actually run the python logic
+    tool_result = calculator.invoke(tool_call)
+    
+    # Append the result to the state
+    return {"messages": [tool_result]}
+
+def build_graph():
+    # Initialize the graph builder
+    workflow = StateGraph(AgentState)
+    
+    # Register our nodes
+    workflow.add_node("agent", call_model)
+    workflow.add_node("tool", execute_tool)
+    workflow.add_node("final_agent", call_model)
+    
+    # 3. EDGES: Hardcoding a fixed path for Phase 3 (START -> agent -> tool -> final -> END)
+    workflow.add_edge(START, "agent")
+    workflow.add_edge("agent", "tool")
+    workflow.add_edge("tool", "final_agent")
+    workflow.add_edge("final_agent", END)
+    
+    # Compile the graph
+    app = workflow.compile()
+    return app
 
 def main():
-    print("Initializing LLM with Tool...\n")
-    llm = ChatOpenAI(base_url=base_url, api_key=api_key, model=model)
+    print("Building LangGraph application...")
+    app = build_graph()
     
-    # Bind the tool to the LLM so it knows it exists and how to use it
-    llm_with_tools = llm.bind_tools([calculator])
+    print("Starting process with initial user goal...\n")
+    initial_state = {
+        "messages": [HumanMessage(content="What is 15 multiplied by 7?")]
+    }
     
-    # 1. User Goal -> LLM
-    # We use a HumanMessage to start the conversation history
-    messages = [HumanMessage(content="What is 15 multiplied by 7?")]
-    print(f"User Goal: {messages[0].content}\n")
+    # Invoke the graph
+    final_state = app.invoke(initial_state)
     
-    # 2. LLM decides what action is needed
-    print("Thinking...")
-    ai_msg = llm_with_tools.invoke(messages)
-    messages.append(ai_msg)
-    
-    # 3. Check if the LLM decided to use a tool
-    if ai_msg.tool_calls:
-        for tool_call in ai_msg.tool_calls:
-            print(f"Tool Requested: {tool_call['name']}")
-            print(f"Tool Arguments: {tool_call['args']}")
-            
-            # 4. Use Tool and Observe Tool Result
-            # Calling `.invoke()` with the tool_call dictionary automatically
-            # returns a ToolMessage containing the result and tool_call_id
-            tool_msg = calculator.invoke(tool_call)
-            messages.append(tool_msg)
-            
-            print(f"Tool Result:    {tool_msg.content}\n")
-            
-        # 5. Tool Result -> LLM -> Final Response
-        print("Sending Tool Result back to LLM to get final answer...")
-        final_response = llm_with_tools.invoke(messages)
-        print("\n--- Final Answer ---")
-        print(final_response.content)
-    else:
-        print("\n--- Final Answer (No tool needed) ---")
-        print(ai_msg.content)
+    print("\n--- Final Messages in State ---")
+    for msg in final_state["messages"]:
+        msg_type = msg.__class__.__name__
+        if msg_type == "HumanMessage":
+            print(f"USER:   {msg.content}")
+        elif msg_type == "AIMessage":
+            print(f"AI:     {msg.content if msg.content else '[Requested Tool]'}")
+        elif msg_type == "ToolMessage":
+            print(f"TOOL:   {msg.content}")
 
 if __name__ == "__main__":
     main()
