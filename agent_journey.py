@@ -1,15 +1,12 @@
 import os
-from pprint import pprint
 from dotenv import load_dotenv
+from typing import Annotated
+from typing_extensions import TypedDict
 
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 
-from typing import Annotated
-from typing_extensions import TypedDict
-
-# LangGraph specific imports
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 
@@ -32,75 +29,82 @@ def calculator(a: float, b: float, operation: str) -> float:
 
 llm_with_tools = llm.bind_tools([calculator])
 
-# 1. STATE: define the minimum state required by LangGraph
 class AgentState(TypedDict):
-    # `add_messages` automatically appends new messages to the existing list
     messages: Annotated[list, add_messages]
 
-# 2. NODES: discrete execution steps
 def call_model(state: AgentState):
-    print("--- [NODE] call_model ---")
+    print("--- [NODE] agent ---")
     messages = state["messages"]
     response = llm_with_tools.invoke(messages)
-    
-    # LangGraph will append this response to the state using `add_messages`
     return {"messages": [response]}
 
 def execute_tool(state: AgentState):
-    print("--- [NODE] execute_tool ---")
+    print("--- [NODE] tool ---")
     messages = state["messages"]
     last_message = messages[-1]
     
-    # For this phase, we hardcode knowing there's a tool call requested
-    tool_call = last_message.tool_calls[0]
-    print(f"Executing local tool: {tool_call['name']}...")
+    results = []
+    # Loop over all requested tool calls
+    for tool_call in last_message.tool_calls:
+        print(f"Executing local tool: {tool_call['name']}({tool_call['args']})")
+        if tool_call["name"] == "calculator":
+            tool_msg = calculator.invoke(tool_call)
+            results.append(tool_msg)
+            
+    return {"messages": results}
+
+# 3. CONDITIONAL ROUTING: Here is the logic that decides what to do next
+def should_continue(state: AgentState) -> str:
+    """Evaluate the state and return the name of the next node to visit."""
+    messages = state["messages"]
+    last_message = messages[-1]
     
-    # Actually run the python logic
-    tool_result = calculator.invoke(tool_call)
+    # If the LLM makes a tool call, route to the "tool" node
+    if hasattr(last_message, 'tool_calls') and len(last_message.tool_calls) > 0:
+        print(">> [ROUTER] Tool needed -> Routing to 'tool'")
+        return "tool"
     
-    # Append the result to the state
-    return {"messages": [tool_result]}
+    # Otherwise, the LLM is done thinking and wrote a final answer
+    print(">> [ROUTER] No tool needed -> Routing to END")
+    return END
 
 def build_graph():
-    # Initialize the graph builder
     workflow = StateGraph(AgentState)
     
-    # Register our nodes
     workflow.add_node("agent", call_model)
     workflow.add_node("tool", execute_tool)
-    workflow.add_node("final_agent", call_model)
     
-    # 3. EDGES: Hardcoding a fixed path for Phase 3 (START -> agent -> tool -> final -> END)
+    # Main flow
     workflow.add_edge(START, "agent")
-    workflow.add_edge("agent", "tool")
-    workflow.add_edge("tool", "final_agent")
-    workflow.add_edge("final_agent", END)
+    workflow.add_edge("tool", "agent")  # After tool runs, obviously return to agent
     
-    # Compile the graph
-    app = workflow.compile()
-    return app
+    # Conditional Flow
+    # After "agent" runs, call 'should_continue' to decide where to go next
+    workflow.add_conditional_edges(
+        "agent",          # The node we are deciding FROM
+        should_continue,  # The routing function
+        # Mapping the string output of routing function to a destination node
+        {
+            "tool": "tool",
+            END: END
+        }
+    )
+    
+    return workflow.compile()
 
 def main():
-    print("Building LangGraph application...")
+    print("Building LangGraph application with conditional routing...\n")
     app = build_graph()
     
-    print("Starting process with initial user goal...\n")
+    print("Prompting agent...\n")
     initial_state = {
-        "messages": [HumanMessage(content="What is 15 multiplied by 7?")]
+        "messages": [HumanMessage(content="Calculate 15 multiplied by 7 using the calculator tool")]
     }
     
-    # Invoke the graph
     final_state = app.invoke(initial_state)
     
-    print("\n--- Final Messages in State ---")
-    for msg in final_state["messages"]:
-        msg_type = msg.__class__.__name__
-        if msg_type == "HumanMessage":
-            print(f"USER:   {msg.content}")
-        elif msg_type == "AIMessage":
-            print(f"AI:     {msg.content if msg.content else '[Requested Tool]'}")
-        elif msg_type == "ToolMessage":
-            print(f"TOOL:   {msg.content}")
+    print("\n--- Final Output ---")
+    print(final_state["messages"][-1].content)
 
 if __name__ == "__main__":
     main()
