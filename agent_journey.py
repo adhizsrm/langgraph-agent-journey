@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
@@ -11,14 +12,20 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 
+# ==========================================
+# 1. SETUP
+# ==========================================
 load_dotenv()
-
 api_key = os.getenv("OPENROUTER_API_KEY")
 base_url = os.getenv("OPENROUTER_BASE_URL")
 model = os.getenv("OPENROUTER_MODEL")
 
 llm = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0.1)
 
+
+# ==========================================
+# 2. TOOLS
+# ==========================================
 @tool
 def calculator(a: float, b: float, operation: str) -> float:
     """Performs basic arithmetic operations: add, subtract, multiply, divide."""
@@ -29,136 +36,157 @@ def calculator(a: float, b: float, operation: str) -> float:
     return 0.0
 
 @tool
-def get_product_price(product_name: str) -> float:
+def product_lookup(product_name: str) -> float:
     """Fetches the current price of a product from the database catalog."""
     catalog = {
         "laptop": 1200.0,
         "mouse": 25.0,
         "keyboard": 75.0,
-        "monitor": 300.0
+        "monitor": 300.0,
+        "desk": 450.0
     }
     return catalog.get(product_name.lower().strip(), 0.0)
 
-tools_list = [calculator, get_product_price]
+tools_list = [calculator, product_lookup]
 llm_with_tools = llm.bind_tools(tools_list)
 tools_map = {t.name: t for t in tools_list}
 
-# We extend AgentState to hold our evaluation flag
+
+# ==========================================
+# 3. STATE
+# ==========================================
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     is_valid_result: bool
 
-def call_model(state: AgentState):
-    print("--- [NODE] agent ---")
-    messages = state["messages"]
-    response = llm_with_tools.invoke(messages)
+
+# ==========================================
+# 4. NODES
+# ==========================================
+def agent_node(state: AgentState):
+    print("\n🧐 [AGENT] Looking at context & thinking about the next step...")
+    time.sleep(1) # Added for readability when watching the console
+    
+    response = llm_with_tools.invoke(state["messages"])
+    
+    if hasattr(response, 'tool_calls') and len(response.tool_calls) > 0:
+        print(f"🤖 [AGENT] Decided to perform {len(response.tool_calls)} action(s).")
+    else:
+        print("🤖 [AGENT] Believes the goal is complete. Formulating final answer...")
+        
     return {"messages": [response]}
 
-def execute_tool(state: AgentState):
-    print("--- [NODE] action (tool) ---")
-    messages = state["messages"]
-    last_message = messages[-1]
+
+def action_node(state: AgentState):
+    print("\n🛠️  [ACTION] Executing tools...")
+    last_message = state["messages"][-1]
     
     results = []
     for tool_call in last_message.tool_calls:
-        print(f"Executing: {tool_call['name']}({tool_call['args']})")
+        print(f"   -> Using tool: {tool_call['name']} | Args: {tool_call['args']}")
+        
         selected_tool = tools_map.get(tool_call["name"])
         if selected_tool:
-            tool_msg = selected_tool.invoke(tool_call)
-            results.append(tool_msg)
+            result = selected_tool.invoke(tool_call)
+            print(f"   <- Observation: {result.content}")
+            results.append(result)
             
     return {"messages": results}
 
-def evaluate_result(state: AgentState):
-    print("--- [NODE] evaluator ---")
-    messages = state["messages"]
-    
-    # Use the LLM as a critic to evaluate if the objective is completely solved
-    eval_prompt = """Does the conversation history show that the initial goal was completely solved?
-Answer exactly 'YES' if all parts of the goal are complete and the final answer is present.
-Answer 'NO' if it is incomplete or incorrect."""
 
-    # We send the messages plus our evaluation prompt
-    evaluation = llm.invoke(messages + [HumanMessage(content=eval_prompt)])
+def evaluator_node(state: AgentState):
+    print("\n🔎 [EVALUATOR] Critiquing the Agent's final answer...")
     
-    print(f">> [EVALUATOR] thought: {evaluation.content}")
+    eval_prompt = """Review the entire conversation history.
+Does the Agent's final answer completely and accurately fulfill the original Goal?
+Reply exactly with 'YES' or 'NO'."""
+    
+    evaluation = llm.invoke(state["messages"] + [HumanMessage(content=eval_prompt)])
     
     if "YES" in evaluation.content.upper():
-        print(">> [EVALUATOR] Goal Achieved -> Approved!")
+        print("✅ [EVALUATOR] Goal successfully achieved. Approving completion!")
         return {"is_valid_result": True}
     else:
-        print(">> [EVALUATOR] Goal NOT Achieved -> Rejecting and forcing retry.")
-        return {
-            "messages": [HumanMessage(content="Evaluator: The goal is not yet complete or the formatting is wrong. Please continue.")],
-            "is_valid_result": False
-        }
+        print("❌ [EVALUATOR] Goal incomplete or incorrect. Sending back to Agent.")
+        feedback = HumanMessage(content="Evaluator: The goal is not yet complete. Please review the missing requirements and continue.")
+        return {"messages": [feedback], "is_valid_result": False}
 
-# --- Router Functions ---
-def should_use_tool(state: AgentState) -> str:
-    # Router 1: Does the agent want a tool or does it think it's done?
+
+# ==========================================
+# 5. ROUTERS (CONDITIONAL LOGIC)
+# ==========================================
+def route_after_agent(state: AgentState) -> str:
     last_message = state["messages"][-1]
-    
     if hasattr(last_message, 'tool_calls') and len(last_message.tool_calls) > 0:
         return "action"
-    
-    # The agent thinks it's done, so send it to the evaluator!
     return "evaluator"
 
-def check_eval(state: AgentState) -> str:
-    # Router 2: Did the evaluator approve?
+def route_after_evaluator(state: AgentState) -> str:
     if state.get("is_valid_result", False):
         return END
-    else:
-        # Go back to the agent to try again
-        return "agent"
+    return "agent"
 
+
+# ==========================================
+# 6. GRAPH ASSEMBLY
+# ==========================================
 def build_graph():
     workflow = StateGraph(AgentState)
     
-    workflow.add_node("agent", call_model)
-    workflow.add_node("action", execute_tool)
-    workflow.add_node("evaluator", evaluate_result)
+    workflow.add_node("agent", agent_node)
+    workflow.add_node("action", action_node)
+    workflow.add_node("evaluator", evaluator_node)
     
-    # 1. Start at the agent
+    # Trace the logic:
+    # 1. Always start at agent
     workflow.add_edge(START, "agent")
     
-    # 2. Agent decides to Tool, or send to Evaluator
-    workflow.add_conditional_edges("agent", should_use_tool, {"action": "action", "evaluator": "evaluator"})
+    # 2. After agent, route to action (tool) or evaluator
+    workflow.add_conditional_edges("agent", route_after_agent, {"action": "action", "evaluator": "evaluator"})
     
-    # 3. If action was taken, observe (go back to agent)
+    # 3. After action, immediately loop back to agent to observe
     workflow.add_edge("action", "agent")
     
-    # 4. If evaluator was triggered, decide based on result
-    workflow.add_conditional_edges("evaluator", check_eval, {"agent": "agent", END: END})
+    # 4. After evaluator, route to END if good, or agent if bad
+    workflow.add_conditional_edges("evaluator", route_after_evaluator, {"agent": "agent", END: END})
     
     return workflow.compile()
 
+
+# ==========================================
+# 7. EXECUTION DEMO
+# ==========================================
 def main():
-    print("Building Evaluator LangGraph...\n")
+    print("="*60)
+    print(" 🧠 LANGGRAPH AGENT SHOWCASE")
+    print("="*60)
     app = build_graph()
     
-    system_prompt = SystemMessage(content='''You are a goal-oriented AI agent.
-When given a goal involving products, first look up their prices.
-Then, calculate the total required.
-''')
+    system_prompt = SystemMessage(content='''You are an intelligent goal-oriented assistant.
+When analyzing products, accurately look up their prices. Use calculators for math.
+Only provide a final answer when the objective is perfectly achieved. No assumptions.''')
 
-    user_goal = HumanMessage(content='''Goal: Calculate the total cost of:
+    user_goal = HumanMessage(content='''Goal: Calculate the total cost for my new setup:
 - 1 Laptop
-- 2 Mice (Mouse)
-- 1 Keyboard''')
+- 1 Desk
+- 1 Monitor''')
 
-    initial_state = {
-        "messages": [system_prompt, user_goal],
-        "is_valid_result": False
-    }
+    print(f"\n🎯 {user_goal.content}")
+    print("-" * 60)
     
-    print("Assigning Goal...")
-    print("\nStarting execution loop...\n")
-    
-    final_state = app.invoke(initial_state)
-    
-    print("\n--- Final Approved Deliverable ---")
-    print(final_state["messages"][-1].content)
+    try:
+        final_state = app.invoke(
+            {"messages": [system_prompt, user_goal], "is_valid_result": False},
+            {"recursion_limit": 15}
+        )
+        
+        print("\n" + "="*60)
+        print("🎉 SUCCESSFUL COMPLETION")
+        print("="*60)
+        print(final_state["messages"][-1].content)
+        
+    except Exception as e:
+        print(f"\n[ERROR] Graph execution failed: {e}")
 
 if __name__ == "__main__":
     main()
