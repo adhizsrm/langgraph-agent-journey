@@ -29,7 +29,7 @@ class AgentState(TypedDict):
 @tool
 def product_lookup(product_name: str) -> float:
     """Fetches the current price of a product."""
-    catalog = {"laptop": 1200.0, "mouse": 25.0, "keyboard": 75.0}
+    catalog = {"laptop": 1200.0, "mouse": 25.0, "keyboard": 75.0, "monitor": 300.0}
     return catalog.get(product_name.lower().strip(), 0.0)
 
 
@@ -43,130 +43,135 @@ def calculator(a: float, b: float, operation: str) -> float:
     return 0.0
 
 
-# 1. Bind tools exclusively for Agent A (Researcher)
-research_tools = [product_lookup]
-research_llm = llm.bind_tools(research_tools)
-research_tools_map = {t.name: t for t in research_tools}
+research_tools_map = {product_lookup.name: product_lookup}
+calc_tools_map = {calculator.name: calculator}
 
-# 2. Bind tools exclusively for Agent B (Calculator)
-calc_tools = [calculator]
-calc_llm = llm.bind_tools(calc_tools)
-calc_tools_map = {t.name: t for t in calc_tools}
+research_llm = llm.bind_tools([product_lookup])
+calc_llm = llm.bind_tools([calculator])
 
 
 # ==========================================
-# AGENT A (RESEARCHER) NODES
+# SUPERVISOR / ORCHESTRATOR NODE
 # ==========================================
-def research_node(state: AgentState):
-    print("--- [AGENT A: RESEARCHER] Thinking ---")
-    # Dynamically inject Agent A's personality so it doesn't get confused by Agent B later
+def orchestrator_node(state: AgentState):
+    print("\n--- [ORCHESTRATOR] Reviewing Progress ---")
+
+    # We force the Supervisor to reply with a strict routing command.
+    # (In production, you'd use Pydantic/function-calling to enforce structure).
     sys_msg = SystemMessage(
-        content="You are a researcher. Use product_lookup to find prices. Once you have all prices, just list them and finish your thoughts."
+        content="""
+    You are the Supervisor. You manage two workers:
+    - 'researcher': looks up product prices.
+    - 'calculator': performs mathematics.
+
+    Analyze the conversation. 
+    If you need prices, reply EXACTLY with: ROUTE: researcher
+    If you have prices but need math, reply EXACTLY with: ROUTE: calculator
+    If the goal is fully answered, reply EXACTLY with: ROUTE: finish
+    """
+    )
+
+    response = llm.invoke([sys_msg] + state["messages"])
+    return {"messages": [response]}
+
+
+def orchestrator_router(state: AgentState) -> str:
+    # Router looks at what the Supervisor decided
+    last_message_content = state["messages"][-1].content
+
+    if "ROUTE: researcher" in last_message_content:
+        print(">> [ROUTER] Delegating to Researcher")
+        return "researcher"
+    elif "ROUTE: calculator" in last_message_content:
+        print(">> [ROUTER] Delegating to Calculator")
+        return "calculator"
+    else:
+        print(">> [ROUTER] Goal completely achieved.")
+        return END
+
+
+# ==========================================
+# SIMPLE WORKER NODES
+# ==========================================
+def worker_research(state: AgentState):
+    print("--- [WORKER: RESEARCHER] Invoked ---")
+
+    sys_msg = SystemMessage(
+        content="You are a researcher. Get the required product prices using your tool."
     )
     response = research_llm.invoke([sys_msg] + state["messages"])
-    return {"messages": [response]}
 
-
-def research_action_node(state: AgentState):
-    last_message = state["messages"][-1]
-    results = []
-    for tool_call in last_message.tool_calls:
-        print(f"   [RESEARCHER Action]: {tool_call['name']}({tool_call['args']})")
-        tool = research_tools_map.get(tool_call["name"])
-        if tool:
+    results = [response]
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        for tool_call in response.tool_calls:
+            print(
+                f"   -> [Researcher Action]: {tool_call['name']}({tool_call['args']})"
+            )
+            tool = research_tools_map.get(tool_call["name"])
             results.append(tool.invoke(tool_call))
+
     return {"messages": results}
 
+def worker_calculator(state: AgentState):
+    print("--- [WORKER: CALCULATOR] Invoked ---")
 
-def research_router(state: AgentState) -> str:
-    last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
-        return "research_action"
-
-    # MAGIC: Instead of routing to END, Agent A routes to Agent B!
-    print(
-        ">> [HANDOFF] Researcher is done fetching data. Passing control to Calculator."
-    )
-    return "calc_node"
-
-
-# ==========================================
-# AGENT B (CALCULATOR) NODES
-# ==========================================
-def calc_node(state: AgentState):
-    print("--- [AGENT B: CALCULATOR] Thinking ---")
-    # Dynamically inject Agent B's personality
-    sys_msg = SystemMessage(
-        content="You are a calculator. Read the prices retrieved earlier in the conversation. Use the calculator tool to compute the exact total cost. Provide the final answer."
-    )
+    sys_msg = SystemMessage(content="You are a calculator. Do math using your tool.")
     response = calc_llm.invoke([sys_msg] + state["messages"])
-    return {"messages": [response]}
 
-
-def calc_action_node(state: AgentState):
-    last_message = state["messages"][-1]
-    results = []
-    for tool_call in last_message.tool_calls:
-        print(f"   [CALCULATOR Action]: {tool_call['name']}({tool_call['args']})")
-        tool = calc_tools_map.get(tool_call["name"])
-        if tool:
+    results = [response]
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        for tool_call in last_message.tool_calls:
+            print(
+                f"   -> [Calculator Action]: {tool_call['name']}({tool_call['args']})"
+            )
+            tool = calc_tools_map.get(tool_call["name"])
             results.append(tool.invoke(tool_call))
+
     return {"messages": results}
 
-
-def calc_router(state: AgentState) -> str:
-    last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
-        return "calc_action"
-
-    print(">> [FINISHED] Calculator is done.")
-    return END
-
-
 # ==========================================
-# UNIFIED PIPELINE BUILDER
+# GRAPH ASSEMBLY
 # ==========================================
-def build_pipeline():
+def build_orchestrator():
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("research_node", research_node)
-    workflow.add_node("research_action", research_action_node)
+    # Add our hubs and spokes
+    workflow.add_node("orchestrator", orchestrator_node)
+    workflow.add_node("researcher", worker_research)
+    workflow.add_node("calculator", worker_calculator)
 
-    workflow.add_node("calc_node", calc_node)
-    workflow.add_node("calc_action", calc_action_node)
+    # Entry point is always Supervisor
+    workflow.add_edge(START, "orchestrator")
 
-    # Sequence: START -> Agent A Loop -> Handoff -> Agent B Loop -> END
-
-    # Agent A loop
-    workflow.add_edge(START, "research_node")
+    # Supervisor delegates outwards
     workflow.add_conditional_edges(
-        "research_node",
-        research_router,
-        {"research_action": "research_action", "calc_node": "calc_node"},
+        "orchestrator",
+        orchestrator_router,
+        {"researcher": "researcher", "calculator": "calculator", END: END},
     )
-    workflow.add_edge("research_action", "research_node")
 
-    # Agent B loop
-    workflow.add_conditional_edges(
-        "calc_node", calc_router, {"calc_action": "calc_action", END: END}
-    )
-    workflow.add_edge("calc_action", "calc_node")
+    # Workers always route backwards to Supervisor when done
+    workflow.add_edge("researcher", "orchestrator")
+    workflow.add_edge("calculator", "orchestrator")
 
     return workflow.compile()
 
 
 def main():
-    print("Building Agent A -> Agent B Pipeline...\n")
-    app = build_pipeline()
+    print("Building Hub-and-Spoke Orchestrator...\n")
+    app = build_orchestrator()
 
     user_goal = HumanMessage(
-        content="Goal: Calculate the total cost of 1 Laptop and 2 Keyboards."
+        content="Goal: Find the total cost of 1 Keyboard and 2 Monitors."
     )
-    print(f"Goal: {user_goal.content}\n")
 
-    final_state = app.invoke({"messages": [user_goal]})
+    print(f"{user_goal.content}")
+    print("=" * 60)
 
-    print("\n--- FINAL DELIVERABLE ---")
+    final_state = app.invoke({"messages": [user_goal]}, {"recursion_limit": 15})
+
+    print("\n" + "=" * 60)
+    print("🎉 FINAL DELIVERABLE")
     print(final_state["messages"][-1].content)
 
 
