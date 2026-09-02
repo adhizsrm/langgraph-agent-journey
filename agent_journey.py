@@ -14,15 +14,32 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
-api_key = os.getenv("OPENROUTER_API_KEY")
-base_url = os.getenv("OPENROUTER_BASE_URL")
-model = os.getenv("OPENROUTER_MODEL")
+llm_provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
 
-llm = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0.1)
+if llm_provider == "mistral":
+    from langchain_mistralai import ChatMistralAI
+
+    api_key = os.getenv("MISTRAL_API_KEY")
+    model = os.getenv("MISTRAL_MODEL", "mistral-large-latest")
+    llm = ChatMistralAI(api_key=api_key, model=model, temperature=0.1)
+else:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    base_url = os.getenv("OPENROUTER_BASE_URL")
+    model = os.getenv("OPENROUTER_MODEL")
+    llm = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0.1)
+
+
+def _format_messages_for_llm(messages):
+    msgs = list(messages)
+    if msgs and msgs[-1].type == "ai":
+        msgs.append(HumanMessage(content="Please proceed with the next step."))
+    return msgs
+
 
 # All agents share the same basic state schema for simplicity in handoffs
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
+
 
 # ==========================================
 # 1. SPECIALIST AGENT: RESEARCHER
@@ -36,12 +53,17 @@ def product_lookup(product_name: str) -> float:
 
 research_llm = llm.bind_tools([product_lookup])
 
+
 def research_node(state: AgentState):
     print("   --- [RESEARCH SPECIALIST] Thinking ---")
     sys = SystemMessage(
         content="You are a researcher. Get product prices. Do not do math."
     )
-    return {"messages": [research_llm.invoke([sys] + state["messages"])]}
+    return {
+        "messages": [
+            research_llm.invoke(_format_messages_for_llm([sys] + state["messages"]))
+        ]
+    }
 
 
 def research_action(state: AgentState):
@@ -91,7 +113,11 @@ def calc_node(state: AgentState):
     sys = SystemMessage(
         content="You are a calculator. Read prices from history and do math. Do not search for products."
     )
-    return {"messages": [calc_llm.invoke([sys] + state["messages"])]}
+    return {
+        "messages": [
+            calc_llm.invoke(_format_messages_for_llm([sys] + state["messages"]))
+        ]
+    }
 
 
 def calc_action(state: AgentState):
@@ -134,10 +160,10 @@ def orchestrator_node(state: AgentState):
         Analyze the conversation. 
         If you need prices, reply EXACTLY with: ROUTE: researcher
         If you need math, reply EXACTLY with: ROUTE: calculator
-        If the objective given by the user is fully answered (all parts), reply EXACTLY with: ROUTE: finish"""
+        If the objective given by the user is fully answered (all parts), provide a final comprehensive answer summarizing the results directly to the user."""
     )
 
-    response = llm.invoke([sys] + state["messages"])
+    response = llm.invoke(_format_messages_for_llm([sys] + state["messages"]))
     return {"messages": [response]}
 
 
