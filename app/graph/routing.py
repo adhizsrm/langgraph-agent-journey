@@ -1,6 +1,19 @@
 from app.state.schemas import GraphState
 
 
+def route_initial_mode(state: GraphState) -> str:
+    if state.get("mode") == "enhance":
+        return "grep_node"
+    return "orchestrator"
+
+
+def route_safety(state: GraphState) -> str:
+    errs = state.get("safety_errors")
+    if errs and len(errs) > 0:
+        return "project_repair"
+    return "validate_generated_project"
+
+
 def route_execution_order(state: GraphState) -> str:
     order = state["orchestrator_spec"].execution_order
     if order == "backend_first":

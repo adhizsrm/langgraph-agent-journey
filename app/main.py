@@ -9,16 +9,44 @@ def main():
 
     while True:
         try:
-            goal = input(
-                "\nEnter your goal for the new CRUD entity (or type 'exit' to quit): "
+            print("\n" + "=" * 50)
+            mode_choice = input(
+                "[1] Create New Project\n[2] Enhance Existing Project\n[q] Quit\nSelect mode: "
             ).strip()
-            if not goal:
-                continue
-            if goal.lower() in ["exit", "quit"]:
+
+            if mode_choice.lower() in ["q", "quit", "exit"]:
                 print("Exiting...")
                 break
 
-            base_dir = "demo_target_project"
+            if mode_choice not in ["1", "2"]:
+                continue
+
+            if mode_choice == "1":
+                goal = input("\nEnter your goal for the new CRUD entity: ").strip()
+                if not goal:
+                    continue
+                mode = "create"
+                source_path = None
+            else:
+                goal = input(
+                    "\nEnter your enhancement request (e.g. 'Add dark mode'): "
+                ).strip()
+                if not goal:
+                    continue
+                source_path = input(
+                    "Enter path to existing project exactly to enhance: "
+                ).strip()
+                if not os.path.exists(source_path):
+                    print("Source path does not exist.")
+                    continue
+                mode = "enhance"
+
+            base_dir = (
+                "demo_target_project"
+                if mode == "create"
+                else f"{os.path.basename(source_path.strip('/\\'))}_enhanced"
+            )
+
             target_path = base_dir
             counter = 2
             while os.path.exists(target_path):
@@ -28,12 +56,14 @@ def main():
             print(f"\n=> Target directory calculated as: {target_path}")
 
             initial_state = {
+                "mode": mode,
                 "raw_goal": goal,
                 "target_project_path": f"./{target_path}",
                 "directory_listing": get_actual_directory_listing(target_path),
+                "source_project_path": source_path,
             }
 
-            print(f"--- Generating CRUD generation for '{goal}' ---")
+            print(f"--- Generating Workflow for '{goal}' ---")
             result = app_graph.invoke(initial_state, {"recursion_limit": 50})
 
             if result.get("error"):

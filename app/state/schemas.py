@@ -67,11 +67,41 @@ class RepairAnalysis(BaseModel):
     changes: List[RepairAction]
 
 
+class EnhancementPatch(BaseModel):
+    target_content: str = Field(
+        ...,
+        description="The exact lines in the file to replace, including leading whitespace.",
+    )
+    replacement_content: str = Field(
+        ..., description="The new code to replace the target content."
+    )
+
+
+class EnhancementAction(BaseModel):
+    file: str = Field(..., description="Relative path of file")
+    action: Literal["modify", "create", "delete"]
+    patches: Optional[List[EnhancementPatch]] = Field(
+        None, description="Only for 'modify' actions"
+    )
+    content: Optional[str] = Field(None, description="Full content for 'create' only")
+
+
+class EnhancementAnalysis(BaseModel):
+    analysis: str
+    changes: List[EnhancementAction]
+
+
 class GraphState(TypedDict):
     # Inputs
+    mode: Literal["create", "enhance"]
     raw_goal: str
     target_project_path: str
     directory_listing: str
+
+    # Enhancement Additions
+    source_project_path: Optional[str]
+    enhancement_files_to_read: Optional[List[str]]
+    enhancement_chunks: Optional[List[dict]]
 
     # Agent Outputs (additive)
     orchestrator_spec: Optional[OrchestratorOutput]
@@ -83,6 +113,7 @@ class GraphState(TypedDict):
     conflicts: Optional[List[str]]
     written_files: Optional[List[str]]
     validation_errors: Optional[List[str]]
+    safety_errors: Optional[List[str]]
 
     # Phase 18 Additions
     execution_result: Optional[Dict[str, Any]]

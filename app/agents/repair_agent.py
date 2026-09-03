@@ -5,7 +5,7 @@ from app.state.schemas import (
     OrchestratorOutput,
     FileContent,
 )
-from app.agents.llm import repair_llm
+from app.agents.llm import repair_llm, enhancement_llm
 from app.prompts.repair import repair_prompt
 
 
@@ -16,10 +16,14 @@ def project_repair_node(state: GraphState) -> GraphState:
 
     validation_errs = state.get("validation_errors", [])
     exec_res = state.get("execution_result", {})
+    safety_errors = state.get("safety_errors", [])
     history = state.get("repair_history", [])
 
     b_files = state.get("backend_files", GeneratedFiles(files=[]))
     f_files = state.get("frontend_files", GeneratedFiles(files=[]))
+
+    b_file_list = b_files.files
+    f_file_list = f_files.files
 
     files_str = (
         "BACKEND FILES:\\n"
@@ -28,71 +32,113 @@ def project_repair_node(state: GraphState) -> GraphState:
         + f_files.model_dump_json(indent=2)
     )
 
-    prompt = repair_prompt.format(
-        goal=state.get("raw_goal", ""),
-        spec=state.get(
-            "orchestrator_spec",
-            OrchestratorOutput(
-                entity_spec={"entity_name": "", "fields": {}},
-                crud_operations=[],
-                api_contract={"base_route": "", "operations": []},
-                execution_order="backend_first",
-                file_locations={},
-            ),
-        ).model_dump_json(indent=2),
-        validation_errors=json.dumps(validation_errs, indent=2),
-        execution_result=json.dumps(exec_res, indent=2),
-        history=json.dumps(history, indent=2),
-        files=files_str,
-    )
+    all_errs = []
+    if validation_errs:
+        all_errs.extend(validation_errs)
+    if safety_errors:
+        all_errs.extend(safety_errors)
 
-    result = repair_llm.invoke(prompt)
-
-    print(f"Repair Analysis: {result.analysis}")
-
-    # Apply modifications
-    b_file_list = b_files.files
-    f_file_list = f_files.files
-
-    backend_root = (
-        state["orchestrator_spec"]
-        .file_locations.get("backend_root", "backend/")
-        .strip("/")
-    )
-    frontend_root = (
-        state["orchestrator_spec"]
-        .file_locations.get("frontend_root", "frontend/")
-        .strip("/")
-    )
-
+    mode = state.get("mode", "create")
     modified_paths = []
 
-    for change in result.changes:
-        path = change.file.replace("\\\\", "/")
-        modified_paths.append(path)
-        is_backend = path.startswith(backend_root)
+    if mode == "enhance":
+        # Pull original logic through identical enhancement patches structure
+        print(" -> Detected Enhancement Iteration Mode. Applying patch constraints.")
+        from app.prompts.enhancement import enhancement_prompt
 
-        target_list = b_file_list if is_backend else f_file_list
-        found = False
+        # Format a dynamic goal appending the explicit errors
+        dynamic_goal = (
+            state.get("raw_goal", "")
+            + f"\\n\\nWARNING: The following structural/safety errors occurred after the last patch iteration:\\n{json.dumps(all_errs, indent=2)}\\n{json.dumps(exec_res, indent=2)}\\nPlease fix these errors using exact patch formatting."
+        )
 
-        if change.action == "delete":
-            target_list[:] = [f for f in target_list if f.path != path]
-        elif change.action == "modify":
-            for f in target_list:
-                if f.path == path:
-                    f.content = change.content
-                    found = True
-                    break
-            if not found:
+        prompt = enhancement_prompt.format(goal=dynamic_goal, chunks=files_str)
+
+        result = enhancement_llm.invoke(prompt)
+        print(f"Repair Analysis (Patch Mode): {result.analysis}")
+
+        for change in result.changes:
+            path = change.file.replace("\\\\", "/")
+            modified_paths.append(path)
+            is_backend = path.startswith("backend/")
+            target_list = b_file_list if is_backend else f_file_list
+            found = False
+
+            if change.action == "delete":
+                if is_backend:
+                    b_file_list = [f for f in b_file_list if f.path != path]
+                else:
+                    f_file_list = [f for f in f_file_list if f.path != path]
+            elif change.action == "create":
+                target_list.append(FileContent(path=path, content=change.content or ""))
+            elif change.action == "modify":
+                for f in target_list:
+                    if f.path == path:
+                        found = True
+                        if change.patches:
+                            for patch in change.patches:
+                                if patch.target_content in f.content:
+                                    f.content = f.content.replace(
+                                        patch.target_content, patch.replacement_content
+                                    )
+                        break
+                if not found:
+                    target_list.append(
+                        FileContent(path=path, content=change.content or "")
+                    )
+
+    else:
+        prompt = repair_prompt.format(
+            goal=state.get("raw_goal", ""),
+            spec=state.get(
+                "orchestrator_spec",
+                OrchestratorOutput(
+                    entity_spec={"entity_name": "", "fields": {}},
+                    crud_operations=[],
+                    api_contract={"base_route": "", "operations": []},
+                    execution_order="backend_first",
+                    file_locations={},
+                ),
+            ).model_dump_json(indent=2),
+            validation_errors=json.dumps(all_errs, indent=2),
+            execution_result=json.dumps(exec_res, indent=2),
+            history=json.dumps(history, indent=2),
+            files=files_str,
+        )
+
+        result = repair_llm.invoke(prompt)
+        print(f"Repair Analysis: {result.analysis}")
+
+        for change in result.changes:
+            path = change.file.replace("\\\\", "/")
+            modified_paths.append(path)
+            is_backend = path.startswith("backend/")
+
+            target_list = b_file_list if is_backend else f_file_list
+            found = False
+
+            if change.action == "delete":
+                if is_backend:
+                    b_file_list = [f for f in b_file_list if f.path != path]
+                else:
+                    f_file_list = [f for f in f_file_list if f.path != path]
+            elif change.action == "modify":
+                for f in target_list:
+                    if f.path == path:
+                        f.content = change.content
+                        found = True
+                        break
+                if not found:
+                    target_list.append(FileContent(path=path, content=change.content))
+            elif change.action == "create":
                 target_list.append(FileContent(path=path, content=change.content))
-        elif change.action == "create":
-            target_list.append(FileContent(path=path, content=change.content))
 
-    # Record history
     new_hist = {
         "attempt": attempts,
-        "source": "validator" if validation_errs else "executor",
-        "errors": validation_errs if validation_errs else exec_res.get("errors", []),
+        "source": (
+            "safety/validator" if validation_errs or safety_errors else "executor"
+        ),
+        "errors": all_errs if all_errs else exec_res.get("errors", []),
         "files_changed": modified_paths,
         "analysis": result.analysis,
         "result": "applied",
@@ -104,7 +150,7 @@ def project_repair_node(state: GraphState) -> GraphState:
         "repair_history": history,
         "backend_files": GeneratedFiles(files=b_file_list),
         "frontend_files": GeneratedFiles(files=f_file_list),
-        # Clear out validation and execution state to force fresh perspective
         "validation_errors": None,
         "execution_result": None,
+        "safety_errors": None,
     }
