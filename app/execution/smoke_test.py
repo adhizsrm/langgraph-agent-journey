@@ -72,7 +72,7 @@ def run_server_smoke_test(
         time.sleep(0.1)
 
     crud_errors = []
-    if startup_verified and api_contract:
+    if startup_verified and api_contract and getattr(api_contract, "operations", []):
         import urllib.request
         import urllib.error
 
