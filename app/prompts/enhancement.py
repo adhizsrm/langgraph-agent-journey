@@ -23,5 +23,7 @@ IMPORTANT ENHANCEMENT CONTRACT RULES:
 3. Make the smallest targeted change that satisfies the request.
 4. If styling requires changes, patch the styling variables, don't drop existing CSS definitions.
 5. Your target_content MUST exist exactly as-is inside the original file snippet.
+6. USER-VISIBLE UI INTEGRATION REQUIRED: Do not simply create logical context wrappers or states! The enhancement MUST be explicitly imported and connected dynamically to the application rendering DOM (`App.jsx`, `index.css`).
+7. If base context files (`App.jsx`, `index.css`) are missing from your chunks but you definitively require them to attach logic, output an error array inside your analysis instead of hallucinating replacement structures.
 """
 )

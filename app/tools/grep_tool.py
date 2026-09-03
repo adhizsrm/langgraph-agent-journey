@@ -4,7 +4,6 @@ from typing import List
 
 
 def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[str]:
-    # Match ES6 imports, CSS @imports, and requires
     import_paths = re.findall(r"import\s+(?:.*?\s+from\s+)?['\"](.*?)['\"]", content)
     import_paths += re.findall(r"require\s*\(\s*['\"](.*?)['\"]\s*\)", content)
     import_paths += re.findall(r"@import\s*(?:url\()?['\"]?(.*?)['\"]?\)?", content)
@@ -13,14 +12,10 @@ def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[st
     file_dir = os.path.dirname(filepath)
 
     for p in import_paths:
-        if p.startswith("."):  # local dependency
-            # basic clean up in case of query params
+        if p.startswith("."):
             clean_p = p.split("?")[0].split("#")[0]
-
-            # Resolve relative path
             normalized_path = os.path.normpath(os.path.join(file_dir, clean_p))
 
-            # Since imports might omit extensions
             possible_extensions = [
                 "",
                 ".js",
@@ -56,10 +51,21 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
         "workspace",
     }
 
+    # Seeds forcing complete architectural visibility even against arbitrary Goal text
+    base_seeds = {
+        "frontend/src/main.jsx",
+        "frontend/src/App.jsx",
+        "frontend/src/index.css",
+        "frontend/src/main.tsx",
+        "frontend/src/App.tsx",
+        "backend/src/server.js",
+        "backend/src/app.js",
+        "backend/server.js",
+    }
+
     initial_matches = set()
     file_contents = {}
 
-    # File walking
     for root, dirs, files in os.walk(base_dir):
         dirs[:] = [d for d in dirs if d not in ignore_dirs]
         for file in files:
@@ -69,6 +75,8 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
                 continue
             filepath = os.path.join(root, file)
             try:
+                rel_path = os.path.relpath(filepath, base_dir).replace("\\", "/")
+
                 with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
                     file_contents[filepath] = content
@@ -76,14 +84,13 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
 
                 file_lower = file.lower()
 
-                # Check for heuristic matches
-                if any(word in content_lower or word in file_lower for word in words):
-                    rel_path = os.path.relpath(filepath, base_dir).replace("\\", "/")
+                if rel_path in base_seeds or any(
+                    word in content_lower or word in file_lower for word in words
+                ):
                     initial_matches.add(rel_path)
             except Exception:
                 pass
 
-    # AST import expansion (Depth 1)
     expanded_set = set(initial_matches)
     for rel_path in initial_matches:
         full_path = os.path.join(base_dir, rel_path)
