@@ -4,5 +4,5 @@ __pycache__/
 *.pyc
 .DS_Store
 workspace/
-*demo_target_project
+demo_target_project*/
 node_modules
