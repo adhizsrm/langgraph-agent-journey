@@ -1,0 +1,31 @@
+﻿python : C:\Users\adh
+is\AppData\Local\Prog
+rams\Python\Python312
+\python.exe: can't 
+open file 'C:\\Users\
+\adhis\\Desktop\\lang
+graph-agent-journey\\
+test_create.py': 
+[Errno 2] No such 
+file or directory
+At line:1 char:30
++ ... \Scripts\Activa
+te.ps1; python 
+test_create.py > 
+result_create.txt 
+2>&1
++                    
+        ~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (C:\User   
+ s\adhis\...le or    
+ directory:Strin    
+g) [], RemoteExc    
+eption
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 

@@ -1,0 +1,29 @@
+RAW:
+```json
+{
+  "files": [
+    {
+      "path": "backend/package.json",
+      "content": "{\n  \"name\": \"backend\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Backend API for Note management\",\n  \"main\": \"src/index.js\",\n  \"scripts\": {\n    \"start\": \"node src/index.js\",\n    \"dev\": \"node src/index.js\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.18.2\",\n    \"cors\": \"^2.8.5\"\n  }\n}"
+    },
+    {
+      "path": "backend/src/index.js",
+      "content": "const express = require('express');\nconst cors = require('cors');\nconst notesRouter = require('./routes/notes');\n\nconst app = express();\nconst PORT = process.env.PORT || 3000;\n\napp.use(cors());\napp.use(express.json());\n\napp.use('/api/notes', notesRouter);\n\napp.listen(PORT, () => {\n  console.log(`Server running on port ${PORT}`);\n});"
+    },
+    {
+      "path": "backend/src/routes/notes.js",
+      "content": "const express = require('express');\nconst router = express.Router();\nconst notesController = require('../controllers/notes');\n\nrouter.post('/', notesController.createNote);\n\nmodule.exports = router;"
+    },
+    {
+      "path": "backend/src/controllers/notes.js",
+      "content": "const notesService = require('../services/notes');\n\nconst createNote = (req, res) => {\n  try {\n    const { title } = req.body;\n    if (!title) {\n      return res.status(400).json({ error: 'Title is required' });\n    }\n    const note = notesService.createNote(title);\n    res.status(201).json(note);\n  } catch (error) {\n    res.status(500).json({ error: error.message });\n  }\n};\n\nmodule.exports = {\n  createNote\n};"
+    },
+    {
+      "path": "backend/src/services/notes.js",
+      "content": "let notes = [];\n\nconst createNote = (title) => {\n  const newNote = {\n    id: notes.length + 1,\n    title\n  };\n  notes.push(newNote);\n  return newNote;\n};\n\nmodule.exports = {\n  createNote\n};"
+    }
+  ]
+}
+```
+
+PARSED SUCCESSFULLY!

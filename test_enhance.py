@@ -21,9 +21,7 @@ def main():
         "mode": "enhance",
         "raw_goal": "Add dark mode",
         "target_project_path": "./demo_target_project_enhanced",
-        "directory_listing": get_actual_directory_listing(
-            "demo_target_project_enhanced"
-        ),
+        "directory_listing": get_actual_directory_listing("demo_target_project"),
         "source_project_path": source_path,
     }
 
