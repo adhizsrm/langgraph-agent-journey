@@ -1,39 +1,121 @@
 import os
 import re
+import json
 from typing import List
+from app.tools.ast_parser import extract_local_imports
 
 
-def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[str]:
-    import_paths = re.findall(r"import\s+(?:.*?\s+from\s+)?['\"](.*?)['\"]", content)
-    import_paths += re.findall(r"require\s*\(\s*['\"](.*?)['\"]\s*\)", content)
-    import_paths += re.findall(r"@import\s*(?:url\()?['\"]?(.*?)['\"]?\)?", content)
+def discover_entry_points(base_dir: str) -> List[str]:
+    """Dynamically discover actual application entry points."""
+    entry_points = set()
+    ignore_dirs = {
+        "node_modules",
+        ".git",
+        "dist",
+        "build",
+        "venv",
+        "__pycache__",
+        "workspace",
+    }
 
-    resolved_files = []
-    file_dir = os.path.dirname(filepath)
+    for root, dirs, files in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        for file in files:
+            filepath = os.path.join(root, file)
+            rel_path = os.path.relpath(filepath, base_dir).replace("\\", "/")
 
-    for p in import_paths:
-        if p.startswith("."):
-            clean_p = p.split("?")[0].split("#")[0]
-            normalized_path = os.path.normpath(os.path.join(file_dir, clean_p))
+            # 1. Package.json analysis
+            if file == "package.json":
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if "main" in data and isinstance(data["main"], str):
+                            main_path = os.path.normpath(
+                                os.path.join(root, data["main"])
+                            ).replace("\\", "/")
+                            entry_points.add(
+                                os.path.relpath(main_path, base_dir).replace("\\", "/")
+                            )
 
-            possible_extensions = [
-                "",
-                ".js",
-                ".jsx",
-                ".ts",
-                ".tsx",
-                ".css",
-                ".json",
-                ".html",
-            ]
-            for ext in possible_extensions:
-                test_path = normalized_path + ext
-                if os.path.isfile(test_path):
-                    rel_path = os.path.relpath(test_path, base_dir).replace("\\", "/")
-                    resolved_files.append(rel_path)
-                    break
+                        scripts = data.get("scripts", {})
+                        for script_name in ["start", "dev", "build"]:
+                            if script_name in scripts:
+                                script_cmd = scripts[script_name]
+                                tokens = script_cmd.split()
+                                for token in tokens:
+                                    if token.endswith((".js", ".ts", ".jsx", ".tsx")):
+                                        script_path = os.path.normpath(
+                                            os.path.join(root, token)
+                                        ).replace("\\", "/")
+                                        entry_points.add(
+                                            os.path.relpath(
+                                                script_path, base_dir
+                                            ).replace("\\", "/")
+                                        )
+                except Exception:
+                    pass
 
-    return resolved_files
+            # 2. HTML entry parsing
+            elif file.endswith(".html"):
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        scripts = re.findall(
+                            r'<script.*?src=["\'](.*?)["\'].*?>', content
+                        )
+                        for src in scripts:
+                            if src.startswith("/"):
+                                src = src[1:]
+                            elif src.startswith("./"):
+                                src = src[2:]
+
+                            script_path = os.path.normpath(
+                                os.path.join(root, src)
+                            ).replace("\\", "/")
+                            entry_points.add(
+                                os.path.relpath(script_path, base_dir).replace(
+                                    "\\", "/"
+                                )
+                            )
+                except Exception:
+                    pass
+
+            # 3. Bootstrap Code Scanning (Fallback explicitly targeting rendered entry points)
+            elif file.endswith((".js", ".jsx", ".ts", ".tsx")):
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if (
+                            "createRoot(" in content
+                            or "ReactDOM.render(" in content
+                            or "app.listen(" in content
+                            or "server.listen(" in content
+                        ):
+                            entry_points.add(rel_path)
+                except Exception:
+                    pass
+
+    # Clean existing filters
+    valid_entry_points = []
+    for ep in entry_points:
+        full = os.path.join(base_dir, ep)
+        if (
+            os.path.exists(full)
+            or os.path.exists(full + ".js")
+            or os.path.exists(full + ".ts")
+            or os.path.exists(full + ".jsx")
+            or os.path.exists(full + ".tsx")
+        ):
+            # Ensure exact file matches exist if not fully suffixed
+            if os.path.exists(full):
+                valid_entry_points.append(ep)
+            else:
+                for ext in [".js", ".ts", ".jsx", ".tsx"]:
+                    if os.path.exists(full + ext):
+                        valid_entry_points.append(ep + ext)
+                        break
+
+    return sorted(list(set(valid_entry_points)))
 
 
 def grep_search(goal: str, base_dir: str) -> List[str]:
@@ -51,17 +133,8 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
         "workspace",
     }
 
-    # Seeds forcing complete architectural visibility even against arbitrary Goal text
-    base_seeds = {
-        "frontend/src/main.jsx",
-        "frontend/src/App.jsx",
-        "frontend/src/index.css",
-        "frontend/src/main.tsx",
-        "frontend/src/App.tsx",
-        "backend/src/server.js",
-        "backend/src/app.js",
-        "backend/server.js",
-    }
+    # Dynamically extract roots explicitly tracking actual frameworks
+    dynamic_seeds = discover_entry_points(base_dir)
 
     initial_matches = set()
     file_contents = {}
@@ -79,34 +152,33 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
 
                 with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
-                    file_contents[filepath] = content
+                    file_contents[rel_path] = content
                     content_lower = content.lower()
 
                 file_lower = file.lower()
 
-                if rel_path in base_seeds or any(
+                if rel_path in dynamic_seeds or any(
                     word in content_lower or word in file_lower for word in words
                 ):
                     initial_matches.add(rel_path)
             except Exception:
                 pass
 
+    # Depth 1: Expanded set via secure AST imports parsing
     expanded_set = set(initial_matches)
     for rel_path in initial_matches:
-        full_path = os.path.join(base_dir, rel_path)
-        if full_path in file_contents:
+        if rel_path in file_contents:
             imports = extract_local_imports(
-                full_path, file_contents[full_path], base_dir
+                os.path.join(base_dir, rel_path), file_contents[rel_path], base_dir
             )
             expanded_set.update(imports)
 
-    # AST import expansion (Depth 2)
+    # Depth 2: AST import expansion scaling memory context boundly
     depth2_set = set(expanded_set)
     for rel_path in expanded_set:
-        full_path = os.path.join(base_dir, rel_path)
-        if full_path in file_contents:
+        if rel_path in file_contents:
             imports = extract_local_imports(
-                full_path, file_contents[full_path], base_dir
+                os.path.join(base_dir, rel_path), file_contents[rel_path], base_dir
             )
             depth2_set.update(imports)
 

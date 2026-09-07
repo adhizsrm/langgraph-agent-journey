@@ -18,12 +18,13 @@ If 'creating' a new file, set action to 'create' and provide the full contents i
 The 'file' field MUST be the exact relative path to the file (e.g. frontend/src/App.jsx).
 
 IMPORTANT ENHANCEMENT CONTRACT RULES:
-1. Modify via inline patches. Never rewrite the file.
+1. Modify via inline patches. Never rewrite the file. Preserve existing APIs/state fields where possible.
 2. Preserve all existing UI, functionality, cards, maps, routes, and imports unless exactly requested to remove them.
 3. Make the smallest targeted change that satisfies the request.
-4. If styling requires changes, patch the styling variables, don't drop existing CSS definitions.
-5. Your target_content MUST exist exactly as-is inside the original file snippet.
+4. If styling requires changes, patch the styling variables and preserve existing style frameworks. Do not drop existing CSS definitions.
+5. Your target_content MUST exist exactly as-is inside the original file snippet. Do NOT hallucinate unseen application definitions!
 6. USER-VISIBLE UI INTEGRATION REQUIRED: Do not simply create logical context wrappers or states! The enhancement MUST be explicitly imported and connected dynamically to the application rendering DOM (`App.jsx`, `index.css`).
-7. If base context files (`App.jsx`, `index.css`) are missing from your chunks but you definitively require them to attach logic, output an error array inside your analysis instead of hallucinating replacement structures.
+7. INSPECT THE RENDERING PATH: Global UI requests (like Dark Mode) should trace completely from theme state -> provider -> application root integration -> DOM theme state -> global CSS styling. Do not implement it just inside an unrelated child component! New state/context must actually be connected to the rendered application realistically.
+8. If base context files (`App.jsx`, `index.css`) are missing from your chunks but you definitively require them to attach logic, output an error array inside your analysis instead of hallucinating replacement structures!
 """
 )

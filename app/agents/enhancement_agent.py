@@ -57,7 +57,12 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
     )
 
     result = enhancement_llm.invoke(prompt)
-    print(f"Enhancement Analysis: {result.analysis}")
+    try:
+        print(f"Enhancement Analysis: {result.analysis}")
+    except UnicodeEncodeError:
+        print(
+            f"Enhancement Analysis: {result.analysis.encode('utf-8', 'replace').decode('utf-8')}"
+        )
 
     b_files, f_files = load_full_project_into_memory(source_path)
 

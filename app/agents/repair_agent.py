@@ -1,4 +1,5 @@
 import json
+import os
 from app.state.schemas import (
     GraphState,
     GeneratedFiles,
@@ -25,20 +26,65 @@ def project_repair_node(state: GraphState) -> GraphState:
     b_file_list = b_files.files
     f_file_list = f_files.files
 
-    files_str = (
-        "BACKEND FILES:\\n"
-        + b_files.model_dump_json(indent=2)
-        + "\\nFRONTEND FILES:\\n"
-        + f_files.model_dump_json(indent=2)
-    )
-
+    mode = state.get("mode", "create")
     all_errs = []
     if validation_errs:
         all_errs.extend(validation_errs)
     if safety_errors:
         all_errs.extend(safety_errors)
 
-    mode = state.get("mode", "create")
+    error_text = json.dumps(all_errs) + json.dumps(exec_res)
+
+    # 1. Select precisely relevant files avoiding Full Project Token Bloat
+    relevant_files = []
+    included_paths = set()
+
+    if mode == "enhance":
+        enhancement_changes = state.get("enhancement_changes", [])
+        for c in enhancement_changes:
+            path = c.get("file", "").replace("\\", "/")
+            included_paths.add(path)
+    else:
+        # Create mode project footprints are traditionally tiny, but we still secure them
+        for f in b_file_list + f_file_list:
+            included_paths.add(f.path)
+
+    # Include specific untargeted files if their filenames natively appear in the error trace!
+    for f in b_file_list + f_file_list:
+        if f.path not in included_paths:
+            basename = os.path.basename(f.path)
+            # basic heuristic checks
+            if basename in error_text:
+                included_paths.add(f.path)
+
+    for path in included_paths:
+        is_backend = path.startswith("backend/")
+        target_group = b_file_list if is_backend else f_file_list
+        for f in target_group:
+            if f.path == path:
+                relevant_files.append({"path": path, "content": f.content})
+                break
+
+    # 2. Hard Byte/Token Guard Limit (Tokens ~ chars/4, 30k = ~120k chars limit)
+    char_limit = 100000
+    current_chars = 0
+    final_files = []
+
+    for f_obj in relevant_files:
+        content = f_obj["content"]
+        if len(content) > 30000:
+            content = (
+                content[:15000] + "\n...[CONTENT TRUNCATED]...\n" + content[-15000:]
+            )
+
+        added_len = len(f_obj["path"]) + len(content)
+        if current_chars + added_len > char_limit:
+            break
+        final_files.append({"path": f_obj["path"], "content": content})
+        current_chars += added_len
+
+    files_str = "RELEVANT FILES LOCATED:\n" + json.dumps(final_files, indent=2)
+
     modified_paths = []
 
     if mode == "enhance":
@@ -47,15 +93,24 @@ def project_repair_node(state: GraphState) -> GraphState:
         from app.prompts.enhancement import enhancement_prompt
 
         # Format a dynamic goal appending the explicit errors
+        attempted_changes = state.get("enhancement_changes", [])
+
         dynamic_goal = (
-            state.get("raw_goal", "")
-            + f"\\n\\nWARNING: The following structural/safety errors occurred after the last patch iteration:\\n{json.dumps(all_errs, indent=2)}\\n{json.dumps(exec_res, indent=2)}\\nPlease fix these errors using exact patch formatting."
+            f"Original Goal: {state.get('raw_goal', '')}\n\n"
+            f"Previous Attempted Changes: {json.dumps(attempted_changes, indent=2)}\n\n"
+            f"WARNING: The following structural/safety/execution errors occurred on your attempt:\n{json.dumps(all_errs, indent=2)}\n{json.dumps(exec_res, indent=2)}\n\n"
+            f"Please strictly fix these errors inside the target files using exact patch formatting. Do NOT regenerate unmodified large files!"
         )
 
         prompt = enhancement_prompt.format(goal=dynamic_goal, chunks=files_str)
 
         result = enhancement_llm.invoke(prompt)
-        print(f"Repair Analysis (Patch Mode): {result.analysis}")
+        try:
+            print(f"Repair Analysis (Patch Mode): {result.analysis}")
+        except Exception:
+            print(
+                f"Repair Analysis (Patch Mode): [Output contained invalid characters and was skipped in console]"
+            )
 
         for change in result.changes:
             path = change.file.replace("\\\\", "/")
@@ -88,6 +143,17 @@ def project_repair_node(state: GraphState) -> GraphState:
                     )
 
     else:
+        # Prevent context bloat by passing only the freshest repair attempt history
+        focused_history = []
+        if history:
+            focused_history.append(
+                {
+                    "attempt": history[-1].get("attempt"),
+                    "errors": history[-1].get("errors"),
+                    "analysis": history[-1].get("analysis"),
+                }
+            )
+
         prompt = repair_prompt.format(
             goal=state.get("raw_goal", ""),
             spec=state.get(
@@ -102,12 +168,17 @@ def project_repair_node(state: GraphState) -> GraphState:
             ).model_dump_json(indent=2),
             validation_errors=json.dumps(all_errs, indent=2),
             execution_result=json.dumps(exec_res, indent=2),
-            history=json.dumps(history, indent=2),
+            history=json.dumps(focused_history, indent=2),
             files=files_str,
         )
 
         result = repair_llm.invoke(prompt)
-        print(f"Repair Analysis: {result.analysis}")
+        try:
+            print(f"Repair Analysis: {result.analysis}")
+        except Exception:
+            print(
+                f"Repair Analysis: [Output contained invalid characters and was skipped in console]"
+            )
 
         for change in result.changes:
             path = change.file.replace("\\\\", "/")

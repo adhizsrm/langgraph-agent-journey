@@ -4,6 +4,7 @@ from typing import Dict, Any
 
 from app.execution.process_runner import run_cmd
 from app.execution.smoke_test import run_server_smoke_test
+from app.validators.topology_validator import validate_topology
 from app.state.schemas import OrchestratorOutput, EntitySpec, APIContract
 
 
@@ -37,10 +38,17 @@ def execute_project(
     backend_cwd = posixpath.join(workspace_path, backend_root)
     frontend_cwd = posixpath.join(workspace_path, frontend_root)
 
+    # 0. Topological UI Isolation Check (AST Graphing)
+    topology_errors = validate_topology(workspace_path)
+    if topology_errors:
+        result["errors"].extend(topology_errors)
+        # We deliberately fail early letting project_repair catch and heal the disconnected UI!
+        return result
+
     # Execute Backend
     if os.path.exists(backend_cwd):
-        print("  -> Installing Backend Dependencies...")
-        install_res = run_cmd("npm install", backend_cwd, timeout=30)
+        print("  -> Installing Backend Dependencies (this may take up to 2 minutes)...")
+        install_res = run_cmd("npm install", backend_cwd, timeout=120)
         if not install_res["success"]:
             result["errors"].append(
                 "Backend npm install failed: " + install_res["stderr"]
@@ -75,8 +83,10 @@ def execute_project(
 
     # Execute Frontend
     if os.path.exists(frontend_cwd):
-        print("  -> Installing Frontend Dependencies...")
-        install_res = run_cmd("npm install", frontend_cwd, timeout=60)
+        print(
+            "  -> Installing Frontend Dependencies (this may take up to 2 minutes)..."
+        )
+        install_res = run_cmd("npm install", frontend_cwd, timeout=120)
         if not install_res["success"]:
             result["errors"].append(
                 "Frontend npm install failed: " + install_res["stderr"]

@@ -28,7 +28,7 @@ from app.graph.routing import (
 )
 
 
-def build_graph() -> StateGraph:
+def build_graph(checkpointer=None) -> StateGraph:
     graph = StateGraph(GraphState)
 
     # Core Generation Agents
@@ -73,4 +73,6 @@ def build_graph() -> StateGraph:
     # Endings
     graph.add_edge("cleanup_failed_project", END)
 
+    if checkpointer:
+        return graph.compile(checkpointer=checkpointer)
     return graph.compile()

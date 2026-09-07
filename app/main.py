@@ -1,10 +1,18 @@
 import os
+import sys
+import sqlite3
+import hashlib
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+sys.stdout.reconfigure(encoding="utf-8")
 from app.utils.directory import get_actual_directory_listing
 from app.graph.builder import build_graph
 
 
 def main():
-    app_graph = build_graph()
+    conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
+    memory = SqliteSaver(conn)
+    app_graph = build_graph(checkpointer=memory)
     print("--- Starting Production CRUD Code Generator (Modularized) ---")
 
     while True:
@@ -55,16 +63,27 @@ def main():
 
             print(f"\n=> Target directory calculated as: {target_path}")
 
-            initial_state = {
-                "mode": mode,
-                "raw_goal": goal,
-                "target_project_path": f"./{target_path}",
-                "directory_listing": get_actual_directory_listing(target_path),
-                "source_project_path": source_path,
-            }
+            thread_string = f"{mode}:{goal}:{source_path}".strip().lower()
+            thread_id = hashlib.md5(thread_string.encode()).hexdigest()
+            config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
 
-            print(f"--- Generating Workflow for '{goal}' ---")
-            result = app_graph.invoke(initial_state, {"recursion_limit": 50})
+            checkpoint = memory.get_tuple(config)
+
+            if checkpoint:
+                print(
+                    f"--- Found suspended execution state. Resuming Workflow for '{goal}' ---"
+                )
+                result = app_graph.invoke(None, config)
+            else:
+                initial_state = {
+                    "mode": mode,
+                    "raw_goal": goal,
+                    "target_project_path": f"./{target_path}",
+                    "directory_listing": get_actual_directory_listing(target_path),
+                    "source_project_path": source_path,
+                }
+                print(f"--- Generating Workflow for '{goal}' ---")
+                result = app_graph.invoke(initial_state, config)
 
             if result.get("error"):
                 print(f"--- FAILED ---")

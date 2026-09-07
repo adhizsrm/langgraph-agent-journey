@@ -1,3 +1,9 @@
 langchain-openai
 python-dotenv
 langgraph
+langchain-mistralai
+pydantic
+tree-sitter>=0.22
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-css

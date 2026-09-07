@@ -32,7 +32,7 @@ def run_cmd(cmd: str, cwd: str, timeout: int = 15) -> Dict[str, Any]:
             "success": False,
             "command": cmd,
             "exit_code": -1,
-            "stdout": e.stdout.decode() if e.stdout else "",
+            "stdout": e.stdout if e.stdout else "",
             "stderr": f"TIMEOUT EXPIRED ({timeout}s)",
             "duration": timeout,
         }
