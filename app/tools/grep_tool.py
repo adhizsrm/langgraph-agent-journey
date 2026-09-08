@@ -169,33 +169,63 @@ def grep_search(goal: str, base_dir: str) -> tuple[List[str], dict]:
             except Exception:
                 pass
 
-    # Depth 1: Expanded set via secure AST imports parsing
-    expanded_set = set(initial_matches)
-    for rel_path in initial_matches:
-        if rel_path in file_contents:
-            imports = extract_local_imports(
-                os.path.join(base_dir, rel_path), file_contents[rel_path], base_dir
-            )
-            expanded_set.update(imports)
+    from app.tools.dependency_graph import build_repository_dependency_graph
 
-    # Depth 2: AST import expansion scaling memory context boundly
-    depth2_set = set(expanded_set)
-    for rel_path in expanded_set:
-        if rel_path in file_contents:
-            imports = extract_local_imports(
-                os.path.join(base_dir, rel_path), file_contents[rel_path], base_dir
-            )
-            depth2_set.update(imports)
+    # Configure Explicit Limits (Phase 4 Step 7)
+    MAX_FORWARD_DEPTH = 2
+    MAX_REVERSE_DEPTH = 2
+    MAX_CONTEXT_FILES = 15
 
-    final_files = list(depth2_set)
+    # 1. Build Global Bounded Graph
+    all_files = list(file_contents.keys())
+    graph = build_repository_dependency_graph(all_files, base_dir, file_contents)
+
+    # 2. Extract Traversal Dependencies
+    forward_depth_1 = graph.get_forward_dependencies(initial_matches, max_depth=1)
+    reverse_depth_1 = graph.get_reverse_dependencies(initial_matches, max_depth=1)
+
+    forward_deps = graph.get_forward_dependencies(
+        initial_matches, max_depth=MAX_FORWARD_DEPTH
+    )
+    reverse_deps = graph.get_reverse_dependencies(
+        initial_matches, max_depth=MAX_REVERSE_DEPTH
+    )
+
+    # 3. Bounded Prioritized Context Construction
+    final_files = []
+
+    priority_groups = [
+        sorted(list(initial_matches)),
+        sorted(list((forward_depth_1 | reverse_depth_1) - initial_matches)),
+        sorted(
+            list(
+                (forward_deps | reverse_deps)
+                - forward_depth_1
+                - reverse_depth_1
+                - initial_matches
+            )
+        ),
+    ]
+
+    for group in priority_groups:
+        for f in group:
+            if len(final_files) < MAX_CONTEXT_FILES and f not in final_files:
+                final_files.append(f)
+
     final_context_chars = sum(len(file_contents.get(f, "")) for f in final_files)
 
     metrics = {
         "total_repository_files_discovered": total_files_discovered,
         "candidate_files_found_by_retrieval": len(initial_matches),
-        "files_added_by_ast_expansion": len(final_files) - len(initial_matches),
+        "forward_dependency_files": len(forward_deps - initial_matches),
+        "reverse_impact_files": len(reverse_deps - initial_matches),
         "final_context_files": len(final_files),
         "final_context_character_count": final_context_chars,
+        "graph_nodes": len(graph.nodes),
+        "graph_edges": sum(len(neighbors) for neighbors in graph.forward.values()),
+        "forward_traversal_depth_configured": MAX_FORWARD_DEPTH,
+        "reverse_traversal_depth_configured": MAX_REVERSE_DEPTH,
+        "max_context_files_configured": MAX_CONTEXT_FILES,
     }
 
     return final_files, metrics
