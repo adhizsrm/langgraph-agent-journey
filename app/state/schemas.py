@@ -132,3 +132,7 @@ class GraphState(TypedDict):
     repair_history: List[Dict[str, Any]]
     workspace_path: Optional[str]
     workflow_status: Optional[str]
+
+    # Phase 3 Additions (Enhancement telemetry / bounded limits)
+    enhancement_changes: Optional[List[Dict[str, Any]]]
+    retrieval_metrics: Optional[Dict[str, Any]]

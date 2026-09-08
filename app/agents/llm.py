@@ -1,4 +1,7 @@
 import os
+import json
+import re
+from typing import Any, Dict
 from dotenv import load_dotenv
 from app.state.schemas import (
     OrchestratorOutput,
@@ -6,6 +9,7 @@ from app.state.schemas import (
     RepairAnalysis,
     EnhancementAnalysis,
 )
+from pydantic import ValidationError
 
 load_dotenv()
 
@@ -36,15 +40,52 @@ else:
         model=os.environ.get("MISTRAL_MODEL", "mistral-small-latest"), temperature=0.1
     )
 
-from langchain_core.output_parsers import PydanticOutputParser
+
+class JSONExtractionError(Exception):
+    pass
 
 
-import re
+class JSONSyntaxError(Exception):
+    pass
+
+
+class SchemaValidationError(Exception):
+    pass
+
+
+def _extract_and_parse_json(content: str) -> Dict[str, Any]:
+    # 1. Strip think blocks cleanly
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+
+    # 2. Extract block gracefully without string corruption
+    candidate = content
+    fallback = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
+    if fallback:
+        candidate = fallback.group(1)
+    else:
+        fallback_match = re.search(r'\{\s*"', content)
+        if fallback_match:
+            start_idx = fallback_match.start()
+            last_brace_idx = content.rfind("}")
+            if last_brace_idx > start_idx:
+                candidate = content[start_idx : last_brace_idx + 1]
+            else:
+                raise JSONExtractionError("Found starting brace but no ending brace")
+        else:
+            candidate = content.strip()
+
+    if not candidate.startswith("{"):
+        raise JSONExtractionError("No JSON object detected in response")
+
+    # DO NOT BLINDLY STRING REPLACE. We explicitly rely on json.loads throwing a JSONDecodeError if \' is inside avoiding silent source corruption!
+    try:
+        parsed = json.loads(candidate, strict=False)
+        return parsed
+    except json.JSONDecodeError as e:
+        raise JSONSyntaxError(f"Extracted candidate was not valid JSON syntax: {e}")
 
 
 def create_structured_llm(pydantic_schema):
-    parser = PydanticOutputParser(pydantic_object=pydantic_schema)
-
     if provider == "openrouter":
         try:
             native_llm = llm.with_structured_output(pydantic_schema)
@@ -55,6 +96,7 @@ def create_structured_llm(pydantic_schema):
                     last_error = None
                     for attempt in range(3):
                         try:
+                            # 1. Invoking natively extracts via provider structural tool-calls organically!
                             return native_llm.invoke(current_prompt)
                         except Exception as e:
                             model_name = (
@@ -64,9 +106,9 @@ def create_structured_llm(pydantic_schema):
                             )
                             current_prompt = (
                                 prompt_str
-                                + f"\n\nCRITICAL RETRY (Attempt {attempt+2}): Your previous response was not valid JSON or did not match the schema.\nThe parser error was:\n{e}\n\nReturn ONLY a valid response matching the required schema. Do not escape single quotes inside JSON as \\'."
+                                + f"\n\nCRITICAL RETRY (Attempt {attempt+2}): Your previous response failed structural extraction.\nThe parser error was:\n{e}\n\nReturn ONLY a valid response matching the required schema. Do not escape single quotes inside JSON strings as \\'. Only escape double quotes."
                             )
-                            last_error = e
+                            last_error = SchemaValidationError(str(e))
                             print(
                                 f"CRITICAL PARSE ERROR on Native LLM Output (Attempt {attempt + 1}) | Provider: {provider} | Model: {model_name}\nError: {e}"
                             )
@@ -77,14 +119,20 @@ def create_structured_llm(pydantic_schema):
         except Exception:
             pass  # Fall back to legacy string parser if with_structured_output crashes statically
 
+    # Manual Parsing Wrapper for Groq / Mistral / Native Failures
+    if hasattr(pydantic_schema, "model_json_schema"):
+        schema_json = pydantic_schema.model_json_schema()
+    else:
+        schema_json = pydantic_schema.schema()
+
     class StructuredLLMWrapper:
         def invoke(self, prompt_str):
             if isinstance(prompt_str, str):
                 final_prompt = (
                     prompt_str
-                    + "\n\nCRITICAL: You MUST output ONLY valid JSON. Absolutely NO conversational text, NO <think> tags, and NO markdown prefixes before the JSON."
-                    + "\n\n"
-                    + parser.get_format_instructions()
+                    + "\n\nCRITICAL: You MUST output ONLY valid JSON matching this schema:\n"
+                    + json.dumps(schema_json, indent=2)
+                    + "\nAbsolutely NO conversational text, NO <think> tags, and NO markdown prefixes before the JSON."
                 )
             else:
                 final_prompt = prompt_str
@@ -96,46 +144,37 @@ def create_structured_llm(pydantic_schema):
                     res = llm.invoke(current_prompt)
                     content = res.content
 
-                    stripped_content = re.sub(
-                        r"<think>.*?</think>", "", content, flags=re.DOTALL
-                    ).strip()
-
                     try:
-                        return parser.parse(stripped_content)
-                    except Exception as e:
-                        fallback = re.search(
-                            r"```json\s*(.*?)\s*```", stripped_content, re.DOTALL
-                        )
-                        if fallback:
-                            try:
-                                return parser.parse(fallback.group(1))
-                            except Exception:
-                                pass
-
-                        fallback_match = re.search(r'\{\s*"', stripped_content)
-                        if fallback_match:
-                            start_idx = fallback_match.start()
-                            last_brace_idx = stripped_content.rfind("}")
-                            if last_brace_idx > start_idx:
-                                try:
-                                    return parser.parse(
-                                        stripped_content[start_idx : last_brace_idx + 1]
-                                    )
-                                except Exception:
-                                    pass
-
-                        model_name = (
-                            llm.model_name if hasattr(llm, "model_name") else "unknown"
-                        )
+                        parsed_dict = _extract_and_parse_json(content)
+                    except JSONExtractionError as e:
                         current_prompt = (
                             final_prompt
-                            + f"\n\nCRITICAL RETRY (Attempt {attempt+2}): Your previous response was not valid JSON.\nThe parser error was:\n{e}\n\nReturn ONLY a valid response matching the required schema. Do not escape single quotes as \\'."
+                            + f"\n\nCRITICAL (Attempt {attempt+2}): JSONExtractionError - No JSON block found. {e}"
                         )
                         last_error = e
-                        print(
-                            f"CRITICAL PARSE ERROR on LLM Output (Attempt {attempt + 1}) | Provider: {provider} | Model: {model_name}\nError: {e}\n--- Output snippet ---\n{content[:500]}"
-                        )
+                        print(f"JSONExtractionError: Attempt {attempt+1}")
                         continue
+                    except JSONSyntaxError as e:
+                        current_prompt = (
+                            final_prompt
+                            + f"\n\nCRITICAL (Attempt {attempt+2}): JSONSyntaxError - {e}. Do NOT escape ' as \\'. Only escape \"."
+                        )
+                        last_error = e
+                        print(f"JSONSyntaxError: Attempt {attempt+1} - {e}")
+                        continue
+
+                    try:
+                        validated = pydantic_schema.model_validate(parsed_dict)
+                        return validated
+                    except ValidationError as e:
+                        current_prompt = (
+                            final_prompt
+                            + f"\n\nCRITICAL (Attempt {attempt+2}): SchemaValidationError - {e}"
+                        )
+                        last_error = SchemaValidationError(f"Schema mismatch: {e}")
+                        print(f"SchemaValidationError: Attempt {attempt+1}")
+                        continue
+
                 except Exception as e:
                     last_error = e
                     continue

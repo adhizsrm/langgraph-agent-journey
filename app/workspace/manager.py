@@ -34,11 +34,15 @@ def create_temp_enhancement_workspace(
     source_path: str,
     backend_files: List[FileContent],
     frontend_files: List[FileContent],
+    enhancement_changes: List[dict] = None,
 ) -> Tuple[str, List[str], str]:
     workspace_id = str(uuid.uuid4())[:8]
     workspace_path = posixpath.join("workspace", f"run_{workspace_id}")
     written_files = []
     error = None
+
+    if enhancement_changes is None:
+        enhancement_changes = []
 
     try:
         # Fork original workspace
@@ -52,8 +56,14 @@ def create_temp_enhancement_workspace(
                 out.write(f.content)
             written_files.append(full_path)
 
-        # Optional: handling removes could be done by diffing keys if strictly needed,
-        # but the primary prompt focused on safe updates.
+        # Handle removals
+        for change in enhancement_changes:
+            if change.get("action") == "delete":
+                target_path = posixpath.join(
+                    workspace_path, change.get("file", "").replace("\\", "/")
+                )
+                if os.path.exists(target_path):
+                    os.remove(target_path)
     except Exception as e:
         error = f"Failed to setup enhancement temp workspace: {str(e)}"
 

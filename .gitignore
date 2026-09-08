@@ -26,3 +26,10 @@ frontend_out.txt
 out.txt
 out2.txt
 test_result.txt
+
+diag8.py
+diag8.txt
+existing_test_results.txt
+metrics_result.txt
+pytest_results.txt
+tests_diag.txt

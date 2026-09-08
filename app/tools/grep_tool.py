@@ -120,7 +120,7 @@ def discover_entry_points(base_dir: str) -> List[str]:
     return sorted(list(set(valid_entry_points)))
 
 
-def grep_search(goal: str, base_dir: str) -> List[str]:
+def grep_search(goal: str, base_dir: str) -> tuple[List[str], dict]:
     words = [w.lower() for w in re.findall(r"\b\w+\b", goal) if len(w) > 3]
     if not words:
         words = [w.lower() for w in goal.split()]
@@ -141,6 +141,8 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
     initial_matches = set()
     file_contents = {}
 
+    total_files_discovered = 0
+
     for root, dirs, files in os.walk(base_dir):
         dirs[:] = [d for d in dirs if d not in ignore_dirs]
         for file in files:
@@ -148,6 +150,7 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
                 (".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".json", ".txt", ".md")
             ):
                 continue
+            total_files_discovered += 1
             filepath = os.path.join(root, file)
             try:
                 rel_path = os.path.relpath(filepath, base_dir).replace("\\", "/")
@@ -184,4 +187,15 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
             )
             depth2_set.update(imports)
 
-    return list(depth2_set)
+    final_files = list(depth2_set)
+    final_context_chars = sum(len(file_contents.get(f, "")) for f in final_files)
+
+    metrics = {
+        "total_repository_files_discovered": total_files_discovered,
+        "candidate_files_found_by_retrieval": len(initial_matches),
+        "files_added_by_ast_expansion": len(final_files) - len(initial_matches),
+        "final_context_files": len(final_files),
+        "final_context_character_count": final_context_chars,
+    }
+
+    return final_files, metrics

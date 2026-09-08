@@ -16,8 +16,8 @@ def grep_node(state: GraphState) -> GraphState:
     print("Running Grep node...")
     source_path = state.get("source_project_path", "")
     goal = state.get("raw_goal", "")
-    files = grep_search(goal, source_path)
-    return {"enhancement_files_to_read": files}
+    files, metrics = grep_search(goal, source_path)
+    return {"enhancement_files_to_read": files, "retrieval_metrics": metrics}
 
 
 def chunker_node(state: GraphState) -> GraphState:
@@ -47,8 +47,9 @@ def create_temp_workspace_node(state: GraphState) -> GraphState:
     mode = state.get("mode", "create")
     if mode == "enhance":
         source_path = state.get("source_project_path", "")
+        enhancement_changes = state.get("enhancement_changes", [])
         workspace_path, written_files, error = create_temp_enhancement_workspace(
-            source_path, backend_files, frontend_files
+            source_path, backend_files, frontend_files, enhancement_changes
         )
     else:
         workspace_path, written_files, error = create_temp_workspace(

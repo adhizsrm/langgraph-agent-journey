@@ -6,6 +6,7 @@ from app.state.schemas import FileContent
 
 def extract_exports(content: str) -> set:
     exports = set()
+    # ES6 Exports
     matches = re.finditer(
         r"export\s+(?:const|let|var|function|class|interface|type|enum)\s+([a-zA-Z0-9_$]+)",
         content,
@@ -24,33 +25,90 @@ def extract_exports(content: str) -> set:
                 exports.add(sym)
     if re.search(r"export\s+default", content):
         exports.add("default")
+
+    # CommonJS module.exports = { ... }
+    matches_cjs = re.finditer(r"module\.exports\s*=\s*\{([^}]+)\}", content)
+    for m in matches_cjs:
+        for sym in m.group(1).split(","):
+            sym = sym.strip()
+            if not sym:
+                continue
+            # Handle standard keys or simple assignments: "foo: bar" -> "foo"
+            if ":" in sym:
+                exports.add(sym.split(":")[0].strip())
+            else:
+                exports.add(sym)
+
+    # CommonJS exports.foo = ...
+    matches_cjs_direct = re.finditer(r"exports\.([a-zA-Z0-9_$]+)\s*=", content)
+    for m in matches_cjs_direct:
+        exports.add(m.group(1))
+
+    # CommonJS module.exports.foo = ...
+    matches_cjs_mod_direct = re.finditer(
+        r"module\.exports\.([a-zA-Z0-9_$]+)\s*=", content
+    )
+    for m in matches_cjs_mod_direct:
+        exports.add(m.group(1))
+
+    # CommonJS module.exports = default_var
+    if re.search(r"module\.exports\s*=\s*[a-zA-Z0-9_$]+", content) and not re.search(
+        r"module\.exports\s*=\s*\{", content
+    ):
+        exports.add("default")
+
     return exports
 
 
 def validate_cross_file_symbols(files: List[FileContent], agent_name: str) -> List[str]:
-    if agent_name == "Backend":
-        return []
     local_errors = []
     file_map = {f.path.replace("\\", "/"): f for f in files}
     exports_map = {
         p: extract_exports(f.content)
         for p, f in file_map.items()
-        if p.endswith((".ts", ".tsx"))
+        if p.endswith((".ts", ".tsx", ".js", ".jsx"))
     }
 
     for path, f in file_map.items():
-        if not path.endswith((".ts", ".tsx")):
+        if not path.endswith((".ts", ".tsx", ".js", ".jsx")):
             continue
         dir_name = posixpath.dirname(path)
 
+        # Container for parsing both import styles uniformly
+        parsed_imports = []
+
+        # 1. ES6 import logic
         import_statements = re.finditer(
             r'import\s+([^"\'\{]*?)(?:\{([^}]+)\})?\s*(?:from\s+)?[\'"](\.[^\'"]+)[\'"]',
             f.content,
         )
         for match in import_statements:
-            default_or_ns = match.group(1).strip()
-            named_imports = match.group(2)
-            import_path = match.group(3)
+            parsed_imports.append(
+                {
+                    "default_or_ns": match.group(1).strip() if match.group(1) else None,
+                    "named_imports": match.group(2),
+                    "import_path": match.group(3),
+                }
+            )
+
+        # 2. CommonJS require logic
+        require_statements = re.finditer(
+            r'(?:const|let|var)\s*(?:\{([^}]+)\}|([a-zA-Z0-9_$]+))\s*=\s*require\([\'"](\.[^\'"]+)[\'"]\)',
+            f.content,
+        )
+        for match in require_statements:
+            parsed_imports.append(
+                {
+                    "default_or_ns": match.group(2).strip() if match.group(2) else None,
+                    "named_imports": match.group(1),
+                    "import_path": match.group(3),
+                }
+            )
+
+        for imp in parsed_imports:
+            default_or_ns = imp["default_or_ns"]
+            named_imports = imp["named_imports"]
+            import_path = imp["import_path"]
 
             resolved = posixpath.normpath(posixpath.join(dir_name, import_path))
             target_path = next(
@@ -80,7 +138,14 @@ def validate_cross_file_symbols(files: List[FileContent], agent_name: str) -> Li
                     named = named.strip()
                     if not named:
                         continue
-                    import_name = named.split(" as ")[0].strip()
+                    # Handle ES6 "foo as bar" or CommonJS "foo: bar" destructuring
+                    if " as " in named:
+                        import_name = named.split(" as ")[0].strip()
+                    elif ":" in named:
+                        import_name = named.split(":")[0].strip()
+                    else:
+                        import_name = named
+
                     if import_name not in target_exports:
                         local_errors.append(
                             f"{agent_name} unresolved export: {path} imports '{import_name}' from '{import_path}', but the target file does not export '{import_name}'."

@@ -7,42 +7,26 @@ from app.prompts.enhancement import enhancement_prompt
 from app.agents.llm import enhancement_llm
 
 
-def load_full_project_into_memory(
-    source_path: str,
+def load_retrieved_files(
+    source_path: str, files_to_read: List[str]
 ) -> tuple[List[FileContent], List[FileContent]]:
+    """Loads only explicitly retrieved file paths restricting aggressive context scaling limits natively."""
     b_files = []
     f_files = []
-    ignore_dirs = {"node_modules", ".git", "dist", "build", "venv", "__pycache__"}
 
-    for root, dirs, files in os.walk(source_path):
-        dirs[:] = [d for d in dirs if d not in ignore_dirs]
-        for file in files:
-            filepath = os.path.join(root, file)
-            if not file.endswith(
-                (
-                    ".js",
-                    ".jsx",
-                    ".ts",
-                    ".tsx",
-                    ".json",
-                    ".html",
-                    ".css",
-                    ".md",
-                    ".env.example",
-                )
-            ):
-                continue
-            rel_path = os.path.relpath(filepath, source_path).replace("\\", "/")
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    content = f.read()
+    for rel_path in set(files_to_read):
+        filepath = os.path.normpath(os.path.join(source_path, rel_path))
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
 
-                if rel_path.startswith("backend/"):
-                    b_files.append(FileContent(path=rel_path, content=content))
-                else:
-                    f_files.append(FileContent(path=rel_path, content=content))
-            except Exception:
-                pass
+            normalized_rel = rel_path.replace("\\", "/")
+            if normalized_rel.startswith("backend/"):
+                b_files.append(FileContent(path=normalized_rel, content=content))
+            else:
+                f_files.append(FileContent(path=normalized_rel, content=content))
+        except Exception:
+            pass
 
     return b_files, f_files
 
@@ -64,7 +48,9 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
             f"Enhancement Analysis: {result.analysis.encode('utf-8', 'replace').decode('utf-8')}"
         )
 
-    b_files, f_files = load_full_project_into_memory(source_path)
+    # Phase 3: We ONLY load the explicitly retrieved relevant files representing contextual deltas!
+    files_to_read = state.get("enhancement_files_to_read", [])
+    b_files, f_files = load_retrieved_files(source_path, files_to_read)
 
     safety_errors = []
 
