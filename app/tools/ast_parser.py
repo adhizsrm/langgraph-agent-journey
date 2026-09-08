@@ -20,7 +20,9 @@ def get_parser_for_file(filepath: str) -> tree_sitter.Parser:
         return tree_sitter.Parser(JS_LANG)
 
 
-def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[str]:
+def extract_local_imports(
+    filepath: str, content: str, base_dir: str, file_map: dict = None
+) -> List[str]:
     parser = get_parser_for_file(filepath)
     try:
         tree = parser.parse(bytes(content, "utf8"))
@@ -79,8 +81,14 @@ def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[st
             ]
             for ext in possible_extensions:
                 test_path = normalized_path + ext
-                if os.path.isfile(test_path):
-                    rel_path = os.path.relpath(test_path, base_dir).replace("\\", "/")
+                rel_path = os.path.relpath(test_path, base_dir).replace("\\", "/")
+
+                exists = (
+                    (rel_path in file_map)
+                    if file_map is not None
+                    else os.path.isfile(test_path)
+                )
+                if exists:
                     resolved_files.append(rel_path)
                     break
             else:
@@ -89,10 +97,14 @@ def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[st
                     if ext == "":
                         continue
                     test_path = os.path.join(normalized_path, "index" + ext)
-                    if os.path.isfile(test_path):
-                        rel_path = os.path.relpath(test_path, base_dir).replace(
-                            "\\", "/"
-                        )
+                    rel_path = os.path.relpath(test_path, base_dir).replace("\\", "/")
+
+                    exists = (
+                        (rel_path in file_map)
+                        if file_map is not None
+                        else os.path.isfile(test_path)
+                    )
+                    if exists:
                         resolved_files.append(rel_path)
                         break
 

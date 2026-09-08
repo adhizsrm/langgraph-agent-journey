@@ -140,3 +140,6 @@ class GraphState(TypedDict):
     # Phase 5 Additions (Atomic Sandbox Bounds)
     pending_patches: Optional[List[Dict[str, Any]]]
     workspace_deletions: Optional[List[str]]
+
+    # Phase 6 Additions (Dependency Metric Boundaries)
+    repair_metrics: Optional[Dict[str, Any]]

@@ -40,7 +40,7 @@ def mock_invoke(*args, **kwargs):
     )
 
 
-def run_mock_test():
+def test_run_mock_test():
     # Import locally to apply the patch before the module fully initializes LLM bindings
     from app.state.schemas import FileContent, GeneratedFiles
 
@@ -68,23 +68,17 @@ def run_mock_test():
         updated_state = project_repair_node(mock_state)
 
     # 3. Assert the results cleanly
-    f_files = updated_state["frontend_files"].files
+    patches = updated_state.get("pending_patches", [])
 
-    print(f"\nFinal length of Frontend Files: {len(f_files)}")
-    print(f"Path stored in list: {f_files[0].path}")
-    print(f"Content stored in list: {f_files[0].content[:80]}...\n")
+    print(f"\nFinal length of Pending Patches: {len(patches)}")
+    if patches:
+        print(f"Path stored in pending patch: {patches[0]['file']}")
+        print(f"Content stored in pending patch: {patches[0]['content'][:80]}...\n")
 
-    if (
-        len(f_files) == 1
-        and f_files[0].path == "frontend/package.json"
-        and "react" in f_files[0].content
-    ):
-        print(
-            "✅ SUCCESS! The file was correctly updated in-place and the path was successfully normalized without duplicates!"
-        )
-    else:
-        print("❌ FAILED! A duplicate was generated or content was ignored.")
+    assert len(patches) == 1
+    assert patches[0]["file"] == "frontend/package.json"
+    assert "react" in patches[0]["content"]
 
 
 if __name__ == "__main__":
-    run_mock_test()
+    test_run_mock_test()

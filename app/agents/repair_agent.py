@@ -50,55 +50,78 @@ def project_repair_node(state: GraphState) -> GraphState:
 
     error_text = json.dumps(all_errs) + json.dumps(exec_res)
 
-    # 1. Select precisely relevant files avoiding Full Project Token Bloat
-    relevant_files = []
-    included_paths = set()
+    # 1. Extract specifically targeted error files dynamically
+    error_files = set()
+    file_map = {f.path: f.content for f in b_file_list + f_file_list}
+    path_list = list(file_map.keys())
 
-    if mode == "enhance":
-        enhancement_changes = state.get("enhancement_changes", [])
-        for c in enhancement_changes:
-            path = c.get("file", "").replace("\\", "/")
-            included_paths.add(path)
-    else:
-        # Create mode project footprints are traditionally tiny, but we still secure them
-        for f in b_file_list + f_file_list:
-            included_paths.add(f.path)
+    for p in path_list:
+        if p in error_text:
+            error_files.add(p)
 
-    # Include specific untargeted files if their filenames natively appear in the error trace!
-    for f in b_file_list + f_file_list:
-        if f.path not in included_paths:
-            basename = os.path.basename(f.path)
-            # basic heuristic checks
-            if basename in error_text:
-                included_paths.add(f.path)
+    # Include fallback boundaries identifying creation files
+    if not error_files and mode == "enhance":
+        for c in state.get("enhancement_changes", []):
+            if c.get("file"):
+                error_files.add(c.get("file").replace("\\", "/"))
+    elif not error_files and mode == "create":
+        error_files = set(path_list)
 
-    for path in included_paths:
-        is_backend = path.startswith("backend/")
-        target_group = b_file_list if is_backend else f_file_list
-        for f in target_group:
-            if f.path == path:
-                relevant_files.append({"path": path, "content": f.content})
-                break
+    # 2. Build Dependency Graph across exact bounds
+    from app.tools.dependency_graph import build_repository_dependency_graph
 
-    # 2. Hard Byte/Token Guard Limit (Tokens ~ chars/4, 30k = ~120k chars limit)
+    workspace_path = state.get("workspace_path", "")
+    graph = build_repository_dependency_graph(path_list, workspace_path, file_map)
+
+    # 3. Pull Impact Traces!
+    dependent_context = set(error_files)
+    if workspace_path:  # Ensure tree checks match explicit roots
+        for ef in error_files:
+            # Add files determining direct implementations AND direct dependencies natively
+            dependent_context.update(graph.get_forward_dependencies({ef}, max_depth=1))
+            dependent_context.update(graph.get_reverse_dependencies({ef}, max_depth=1))
+
+    # 4. Topological Prioritization (Dependencies Before Dependents)
+    def count_forward_deps(path):
+        return len(graph.get_forward_dependencies({path}, max_depth=5))
+
+    ordered_paths = sorted(list(dependent_context), key=lambda x: count_forward_deps(x))
+
+    # 5. Handle Package Contradictions
+    # If standard validation complains about missing dependencies natively present in package.json!
+    package_json = file_map.get("frontend/package.json", "") + file_map.get(
+        "backend/package.json", ""
+    )
+    package_metadata_override = ""
+    if "Cannot find module" in error_text or "Missing" in error_text:
+        # We explicitly surface this paradox safely!
+        package_metadata_override = "\n\n[PACKAGE DEPENDENCY NOTE: Ensure dependency mismatches evaluate physical package.json values! Check versions natively!]"
+
+    # 6. Hard Byte/Token Guard Limit (Tokens ~ chars/4, 30k = ~120k chars limit)
     char_limit = 100000
     current_chars = 0
     final_files = []
 
-    for f_obj in relevant_files:
-        content = f_obj["content"]
+    for path in ordered_paths:
+        if path not in file_map:
+            continue
+        content = file_map[path]
         if len(content) > 30000:
             content = (
                 content[:15000] + "\n...[CONTENT TRUNCATED]...\n" + content[-15000:]
             )
 
-        added_len = len(f_obj["path"]) + len(content)
+        added_len = len(path) + len(content)
         if current_chars + added_len > char_limit:
             break
-        final_files.append({"path": f_obj["path"], "content": content})
+        final_files.append({"path": path, "content": content})
         current_chars += added_len
 
-    files_str = "RELEVANT FILES LOCATED:\n" + json.dumps(final_files, indent=2)
+    files_str = (
+        "RELEVANT REPAIR CONTEXT (ORDERED ROOT-CAUSE DEPENDENCIES FIRST):\n"
+        + json.dumps(final_files, indent=2)
+        + package_metadata_override
+    )
 
     modified_paths = []
 
@@ -188,6 +211,16 @@ def project_repair_node(state: GraphState) -> GraphState:
     }
     history.append(new_hist)
 
+    repair_metrics = {
+        "repair_error_count": (
+            len(all_errs) if all_errs else len(exec_res.get("errors", []))
+        ),
+        "repair_context_files": len(final_files),
+        "repair_direct_files": len(error_files),
+        "repair_dependency_files": len(dependent_context) - len(error_files),
+        "repair_patch_count": len(result.changes),
+    }
+
     return {
         "repair_attempts": attempts,
         "repair_history": history,
@@ -197,4 +230,5 @@ def project_repair_node(state: GraphState) -> GraphState:
         "execution_result": None,
         "safety_errors": None,
         "pending_patches": [c.model_dump() for c in result.changes],
+        "repair_metrics": repair_metrics,
     }

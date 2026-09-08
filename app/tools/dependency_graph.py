@@ -49,7 +49,10 @@ def build_repository_dependency_graph(
         content = file_contents.get(rel_path, "")
         if content:
             valid_imports = extract_local_imports(
-                os.path.join(base_dir, rel_path), content, base_dir
+                os.path.join(base_dir, rel_path),
+                content,
+                base_dir,
+                file_map=file_contents,
             )
             for imp in valid_imports:
                 graph.add_edge(rel_path, imp)
