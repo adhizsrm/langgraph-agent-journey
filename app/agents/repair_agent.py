@@ -33,6 +33,21 @@ def project_repair_node(state: GraphState) -> GraphState:
     if safety_errors:
         all_errs.extend(safety_errors)
 
+    # Detect lack of repair progress (repeated identical errors)
+    if history and attempts > 1:
+        last_errors = history[-1].get("errors", [])
+        if sorted(all_errs) == sorted(last_errors):
+            return {
+                "error": "FINAL FAILURE: Repair loop detected lack of progress. The identical validation errors persisted after repair.",
+                "workflow_status": "FAILED",
+                "repair_attempts": 3,
+                "backend_files": GeneratedFiles(files=b_file_list),
+                "frontend_files": GeneratedFiles(files=f_file_list),
+                "validation_errors": None,
+                "execution_result": None,
+                "safety_errors": None,
+            }
+
     error_text = json.dumps(all_errs) + json.dumps(exec_res)
 
     # 1. Select precisely relevant files avoiding Full Project Token Bloat
@@ -87,6 +102,9 @@ def project_repair_node(state: GraphState) -> GraphState:
 
     modified_paths = []
 
+    def _norm(p: str) -> str:
+        return p.replace("frontend/", "").replace("backend/", "").strip("/")
+
     if mode == "enhance":
         # Pull original logic through identical enhancement patches structure
         print(" -> Detected Enhancement Iteration Mode. Applying patch constraints.")
@@ -121,14 +139,18 @@ def project_repair_node(state: GraphState) -> GraphState:
 
             if change.action == "delete":
                 if is_backend:
-                    b_file_list = [f for f in b_file_list if f.path != path]
+                    b_file_list = [
+                        f for f in b_file_list if _norm(f.path) != _norm(path)
+                    ]
                 else:
-                    f_file_list = [f for f in f_file_list if f.path != path]
+                    f_file_list = [
+                        f for f in f_file_list if _norm(f.path) != _norm(path)
+                    ]
             elif change.action == "create":
                 target_list.append(FileContent(path=path, content=change.content or ""))
             elif change.action == "modify":
                 for f in target_list:
-                    if f.path == path:
+                    if _norm(f.path) == _norm(path):
                         found = True
                         if change.patches:
                             for patch in change.patches:
@@ -136,6 +158,7 @@ def project_repair_node(state: GraphState) -> GraphState:
                                     f.content = f.content.replace(
                                         patch.target_content, patch.replacement_content
                                     )
+                        f.path = path  # Update path to fully qualified version
                         break
                 if not found:
                     target_list.append(
@@ -190,13 +213,18 @@ def project_repair_node(state: GraphState) -> GraphState:
 
             if change.action == "delete":
                 if is_backend:
-                    b_file_list = [f for f in b_file_list if f.path != path]
+                    b_file_list = [
+                        f for f in b_file_list if _norm(f.path) != _norm(path)
+                    ]
                 else:
-                    f_file_list = [f for f in f_file_list if f.path != path]
+                    f_file_list = [
+                        f for f in f_file_list if _norm(f.path) != _norm(path)
+                    ]
             elif change.action == "modify":
                 for f in target_list:
-                    if f.path == path:
+                    if _norm(f.path) == _norm(path):
                         f.content = change.content
+                        f.path = path
                         found = True
                         break
                 if not found:

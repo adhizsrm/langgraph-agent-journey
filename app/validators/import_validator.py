@@ -3,12 +3,10 @@ import posixpath
 from typing import List
 from app.state.schemas import FileContent
 
-IMPORT_REGEX = re.compile(r'(?:import|from)\s+[\'"](\.[^\'"]+)[\'"]')
+IMPORT_REGEX = re.compile(r'(?:import|from|require\()\s*[\'"](\.[^\'"]+)[\'"]')
 
 
 def validate_local_imports(files: List[FileContent], agent_name: str) -> List[str]:
-    if agent_name == "Backend":
-        return []
     local_errors = []
     file_paths = {f.path.replace("\\", "/") for f in files}
 

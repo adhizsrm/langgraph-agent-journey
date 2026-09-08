@@ -28,12 +28,8 @@ def execute_project(
             file_locations={},
         )
 
-    backend_root = orchestrator_spec.file_locations.get(
-        "backend_root", "backend/"
-    ).strip("/")
-    frontend_root = orchestrator_spec.file_locations.get(
-        "frontend_root", "frontend/"
-    ).strip("/")
+    backend_root = orchestrator_spec.file_locations.backend_root.strip("/")
+    frontend_root = orchestrator_spec.file_locations.frontend_root.strip("/")
 
     backend_cwd = posixpath.join(workspace_path, backend_root)
     frontend_cwd = posixpath.join(workspace_path, frontend_root)

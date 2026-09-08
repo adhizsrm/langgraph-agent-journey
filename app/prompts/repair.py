@@ -25,8 +25,17 @@ Previous Repair History:
 Current Project Files (Backend & Frontend):
 {files}
 
-Provide your analysis and the exact file changes needed to fix the issues.
-If modifying a file or creating a new one, provide the FULL updated contents in the 'content' field.
+Provide your analysis and the exact file changes needed to fix the issues. Do not merely describe the problem in the analysis; produce the actual repair action.
+After proposing repairs, verify the resulting file graph mentally before returning.
+
 The 'file' field MUST be the relative path (e.g. backend/src/index.js).
+The 'action' field must be one of:
+- `create` = create a new file with the supplied full contents.
+- `modify` = replace/update an existing file entirely with the supplied full contents.
+- `delete` = remove an existing unnecessary/duplicate file.
+
+If modifying a file or creating a new one, provide the FULL updated contents in the 'content' field.
+When topology reports a duplicate/orphan file, you MUST either wire it into the application if it is genuinely required, or delete it using the 'delete' action if it is unnecessary.
+All modified imports must point to files that actually exist.
 """
 )

@@ -36,27 +36,19 @@ def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[st
                 if child.type == "string":
                     raw_imports.append(child.text.decode("utf-8").strip("'\""))
 
-        # CommonJS
+        # CommonJS OR Dynamic import() combined into single check
         elif node.type == "call_expression":
-            is_require = False
+            is_require_or_import = False
             for child in node.children:
-                if (
+                if child.type == "import":
+                    is_require_or_import = True
+                elif (
                     child.type == "identifier"
                     and child.text.decode("utf-8") == "require"
                 ):
-                    is_require = True
-                if is_require and child.type == "arguments":
-                    for arg in child.children:
-                        if arg.type == "string":
-                            raw_imports.append(arg.text.decode("utf-8").strip("'\""))
+                    is_require_or_import = True
 
-        # Dynamic import()
-        elif node.type == "call_expression":
-            is_import = False
-            for child in node.children:
-                if child.type == "import":
-                    is_import = True
-                if is_import and child.type == "arguments":
+                if is_require_or_import and child.type == "arguments":
                     for arg in child.children:
                         if arg.type == "string":
                             raw_imports.append(arg.text.decode("utf-8").strip("'\""))
@@ -91,5 +83,17 @@ def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[st
                     rel_path = os.path.relpath(test_path, base_dir).replace("\\", "/")
                     resolved_files.append(rel_path)
                     break
+            else:
+                # Fallback checking directories for index files
+                for ext in possible_extensions:
+                    if ext == "":
+                        continue
+                    test_path = os.path.join(normalized_path, "index" + ext)
+                    if os.path.isfile(test_path):
+                        rel_path = os.path.relpath(test_path, base_dir).replace(
+                            "\\", "/"
+                        )
+                        resolved_files.append(rel_path)
+                        break
 
     return list(set(resolved_files))

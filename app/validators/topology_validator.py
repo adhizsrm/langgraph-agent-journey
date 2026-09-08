@@ -64,7 +64,7 @@ def validate_topology(workspace_path: str) -> List[str]:
 
             if rel_path not in reachable_files:
                 errors.append(
-                    f"Topological Disconnect: '{rel_path}' is never imported or rendered by the application roots ({entry_roots}). You must wire it into the main DOM / Providers!"
+                    f"Topological Disconnect: '{rel_path}' is never imported or rendered by the application roots ({entry_roots}). If this file is required, you must wire it into the main DOM / Providers! If it is a duplicate or unnecessary, you must delete it using the 'delete' action."
                 )
 
     return errors

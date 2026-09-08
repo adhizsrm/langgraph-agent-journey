@@ -22,3 +22,7 @@ test_final.txt
 utf8_final_trace.txt
 utf8_result.txt
 checkpoints.sqlite
+frontend_out.txt
+out.txt
+out2.txt
+test_result.txt

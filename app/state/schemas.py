@@ -34,6 +34,17 @@ class APIContract(BaseModel):
     )
 
 
+class FileLocations(BaseModel):
+    backend_root: str = Field(
+        default="backend/",
+        description="Root directory for the backend (e.g. 'backend/')",
+    )
+    frontend_root: str = Field(
+        default="frontend/",
+        description="Root directory for the frontend (e.g. 'frontend/')",
+    )
+
+
 class OrchestratorOutput(BaseModel):
     entity_spec: EntitySpec
     crud_operations: List[str] = Field(
@@ -44,9 +55,9 @@ class OrchestratorOutput(BaseModel):
     execution_order: Literal["backend_first", "frontend_first"] = Field(
         ..., description="Which agent runs first"
     )
-    file_locations: Dict[str, str] = Field(
+    file_locations: FileLocations = Field(
         ...,
-        description="Inferred target file locations, e.g. {'backend_routes': 'backend/src/routes/'}",
+        description="Target root locations for the generated files",
     )
 
 

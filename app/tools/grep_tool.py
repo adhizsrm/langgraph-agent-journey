@@ -99,18 +99,20 @@ def discover_entry_points(base_dir: str) -> List[str]:
     valid_entry_points = []
     for ep in entry_points:
         full = os.path.join(base_dir, ep)
-        if (
-            os.path.exists(full)
-            or os.path.exists(full + ".js")
-            or os.path.exists(full + ".ts")
-            or os.path.exists(full + ".jsx")
-            or os.path.exists(full + ".tsx")
-        ):
-            # Ensure exact file matches exist if not fully suffixed
-            if os.path.exists(full):
-                valid_entry_points.append(ep)
-            else:
-                for ext in [".js", ".ts", ".jsx", ".tsx"]:
+        if os.path.exists(full):
+            valid_entry_points.append(ep)
+        else:
+            base_full, orig_ext = os.path.splitext(full)
+            found = False
+            for ext in [".js", ".ts", ".jsx", ".tsx", ".css"]:
+                if os.path.exists(base_full + ext):
+                    valid_entry_points.append(
+                        ep.replace(orig_ext, ext) if orig_ext else ep + ext
+                    )
+                    found = True
+                    break
+            if not found:
+                for ext in [".js", ".ts", ".jsx", ".tsx", ".css"]:
                     if os.path.exists(full + ext):
                         valid_entry_points.append(ep + ext)
                         break
