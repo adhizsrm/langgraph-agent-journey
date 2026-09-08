@@ -1,57 +1,79 @@
-import os
-from typing import List
-from app.state.schemas import GraphState, FileContent
-
-
-def _count_lines(files: List[FileContent]) -> int:
-    return sum(len(f.content.splitlines()) for f in files)
+from app.state.schemas import GraphState, GeneratedFiles
+from app.tools.patch_engine import validate_and_apply_patches
 
 
 def project_safety_node(state: GraphState) -> GraphState:
-    print("Running Project Safety Evaluation Node...")
+    print("Running Unified Patch Engine / Safety Evaluation Node...")
 
-    mode = state.get("mode", "create")
-    if mode != "enhance":
-        return {}  # Only matters for enhancements where drop off threatens destruction
-
-    source_path = state.get("source_project_path", "")
-    if not source_path:
-        return {}
+    pending_patches = state.get("pending_patches", [])
+    if not pending_patches:
+        return {}  # No patches to apply, proceed cleanly
 
     b_files = state.get("backend_files")
     f_files = state.get("frontend_files")
-    if not b_files or not f_files:
-        return {}
 
-    # Gather original files layout
-    from app.agents.enhancement_agent import load_full_project_into_memory
+    source_b = b_files.files if b_files else []
+    source_f = f_files.files if f_files else []
 
-    orig_b, orig_f = load_full_project_into_memory(source_path)
+    new_b, new_f, results, success, error_msg = validate_and_apply_patches(
+        source_b, source_f, pending_patches
+    )
 
-    original_lines = _count_lines(orig_b) + _count_lines(orig_f)
-    new_lines = _count_lines(b_files.files) + _count_lines(f_files.files)
+    if not success:
+        errs = state.get("safety_errors", []) or []
+        errs.extend(results.get("errors", []))
+        if error_msg:
+            errs.append(f"Patch Engine Hard Fault: {error_msg}")
 
+        # Optional diagnostic output keeping loops clean
+        print("--- PATCH FAULT ---")
+        for e in errs:
+            print(f" * {e}")
+
+        return {"safety_errors": errs}
+
+    def _count_lines(files) -> int:
+        return sum(len(f.content.splitlines()) for f in files)
+
+    # -------------------------------------------------------------
+    # RESTORED PROJECT DESTRUCTION SAFETY CHECKS (Do NOT Remove!)
+    # -------------------------------------------------------------
+    mode = state.get("mode", "create")
     safety_errors = state.get("safety_errors", []) or []
+    source_path = state.get("source_project_path", "")
 
-    # Check overall line reduction
-    if original_lines > 0:
-        ratio = new_lines / original_lines
-        if ratio < 0.85:
-            safety_errors.append(
-                f"Destruction Safety Triggered: Projected workspace dropped massive line counts ({(1-ratio)*100:.1f}% reduction). The Agent erased functionality."
-            )
+    if mode == "enhance" and source_path:
+        from app.agents.enhancement_agent import load_full_project_into_memory
 
-    # Check if a critical file suddenly dropped entirely without 'delete' instruction context (e.g. LLM failure)
-    orig_names = set(f.path for f in orig_b + orig_f)
-    new_names = set(f.path for f in b_files.files + f_files.files)
+        orig_b, orig_f = load_full_project_into_memory(source_path)
 
-    missing = orig_names - new_names
-    for m in missing:
-        safety_errors.append(
-            f"Destruction Safety Triggered: Component '{m}' was unexpectedly wiped from the codebase."
-        )
+        original_lines = _count_lines(orig_b) + _count_lines(orig_f)
+        new_lines = _count_lines(new_b) + _count_lines(new_f)
+
+        if original_lines > 0:
+            ratio = new_lines / original_lines
+            if ratio < 0.85:
+                safety_errors.append(
+                    f"Destruction Safety Triggered: Projected workspace dropped massive line counts ({(1-ratio)*100:.1f}% reduction). The Agent erased functionality."
+                )
+
+        orig_names = set(f.path for f in orig_b + orig_f)
+        new_names = set(f.path for f in new_b + new_f)
+
+        missing = orig_names - new_names
+        for m in missing:
+            if m not in results.get("deleted", []):
+                safety_errors.append(
+                    f"Destruction Safety Triggered: Component '{m}' was unexpectedly wiped from the codebase."
+                )
 
     if safety_errors:
         return {"safety_errors": safety_errors}
 
-    return {}
+    return {
+        "backend_files": GeneratedFiles(files=new_b),
+        "frontend_files": GeneratedFiles(files=new_f),
+        "pending_patches": [],  # Flush states cleanly preventing infinite overrides
+        "safety_errors": [],  # Flush previous safety errors on success!
+        "workspace_deletions": results.get("deleted", []),
+    }

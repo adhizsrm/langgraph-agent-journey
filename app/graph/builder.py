@@ -68,7 +68,7 @@ def build_graph(checkpointer=None) -> StateGraph:
     graph.add_conditional_edges("validate_generated_project", route_validation)
     graph.add_edge("create_temp_workspace", "project_executor")
     graph.add_conditional_edges("project_executor", route_executor)
-    graph.add_edge("project_repair", "validate_generated_project")
+    graph.add_edge("project_repair", "project_safety_node")
 
     # Endings
     graph.add_edge("cleanup_failed_project", END)

@@ -136,3 +136,7 @@ class GraphState(TypedDict):
     # Phase 3 Additions (Enhancement telemetry / bounded limits)
     enhancement_changes: Optional[List[Dict[str, Any]]]
     retrieval_metrics: Optional[Dict[str, Any]]
+
+    # Phase 5 Additions (Atomic Sandbox Bounds)
+    pending_patches: Optional[List[Dict[str, Any]]]
+    workspace_deletions: Optional[List[str]]

@@ -48,45 +48,12 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
             f"Enhancement Analysis: {result.analysis.encode('utf-8', 'replace').decode('utf-8')}"
         )
 
-    # Phase 3: We ONLY load the explicitly retrieved relevant files representing contextual deltas!
+    # Phase 3/5: We ONLY load explicitly retrieved context restricting boundaries, generating declarative patches safely!
     files_to_read = state.get("enhancement_files_to_read", [])
     b_files, f_files = load_retrieved_files(source_path, files_to_read)
-
-    safety_errors = []
-
-    for change in result.changes:
-        path = change.file.replace("\\\\", "/").replace("\\", "/")
-        is_backend = path.startswith("backend/")
-        target_list = b_files if is_backend else f_files
-        found = False
-
-        if change.action == "delete":
-            target_list[:] = [f for f in target_list if f.path != path]
-        elif change.action == "create":
-            target_list.append(FileContent(path=path, content=change.content or ""))
-        elif change.action == "modify":
-            for f in target_list:
-                if f.path == path:
-                    found = True
-                    if change.patches:
-                        for patch in change.patches:
-                            if patch.target_content in f.content:
-                                f.content = f.content.replace(
-                                    patch.target_content, patch.replacement_content
-                                )
-                            else:
-                                safety_errors.append(
-                                    f"Patch target not found in {path}: {patch.target_content[:30]}..."
-                                )
-                    break
-            if not found:
-                safety_errors.append(
-                    f"Target file for modification not found structurally: {path}"
-                )
 
     return {
         "backend_files": GeneratedFiles(files=b_files),
         "frontend_files": GeneratedFiles(files=f_files),
-        "safety_errors": safety_errors if safety_errors else None,
-        "enhancement_changes": [c.model_dump() for c in result.changes],
+        "pending_patches": [c.model_dump() for c in result.changes],
     }

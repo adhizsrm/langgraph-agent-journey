@@ -133,37 +133,6 @@ def project_repair_node(state: GraphState) -> GraphState:
         for change in result.changes:
             path = change.file.replace("\\\\", "/")
             modified_paths.append(path)
-            is_backend = path.startswith("backend/")
-            target_list = b_file_list if is_backend else f_file_list
-            found = False
-
-            if change.action == "delete":
-                if is_backend:
-                    b_file_list = [
-                        f for f in b_file_list if _norm(f.path) != _norm(path)
-                    ]
-                else:
-                    f_file_list = [
-                        f for f in f_file_list if _norm(f.path) != _norm(path)
-                    ]
-            elif change.action == "create":
-                target_list.append(FileContent(path=path, content=change.content or ""))
-            elif change.action == "modify":
-                for f in target_list:
-                    if _norm(f.path) == _norm(path):
-                        found = True
-                        if change.patches:
-                            for patch in change.patches:
-                                if patch.target_content in f.content:
-                                    f.content = f.content.replace(
-                                        patch.target_content, patch.replacement_content
-                                    )
-                        f.path = path  # Update path to fully qualified version
-                        break
-                if not found:
-                    target_list.append(
-                        FileContent(path=path, content=change.content or "")
-                    )
 
     else:
         # Prevent context bloat by passing only the freshest repair attempt history
@@ -206,31 +175,6 @@ def project_repair_node(state: GraphState) -> GraphState:
         for change in result.changes:
             path = change.file.replace("\\\\", "/")
             modified_paths.append(path)
-            is_backend = path.startswith("backend/")
-
-            target_list = b_file_list if is_backend else f_file_list
-            found = False
-
-            if change.action == "delete":
-                if is_backend:
-                    b_file_list = [
-                        f for f in b_file_list if _norm(f.path) != _norm(path)
-                    ]
-                else:
-                    f_file_list = [
-                        f for f in f_file_list if _norm(f.path) != _norm(path)
-                    ]
-            elif change.action == "modify":
-                for f in target_list:
-                    if _norm(f.path) == _norm(path):
-                        f.content = change.content
-                        f.path = path
-                        found = True
-                        break
-                if not found:
-                    target_list.append(FileContent(path=path, content=change.content))
-            elif change.action == "create":
-                target_list.append(FileContent(path=path, content=change.content))
 
     new_hist = {
         "attempt": attempts,
@@ -252,4 +196,5 @@ def project_repair_node(state: GraphState) -> GraphState:
         "validation_errors": None,
         "execution_result": None,
         "safety_errors": None,
+        "pending_patches": [c.model_dump() for c in result.changes],
     }

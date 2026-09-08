@@ -57,13 +57,12 @@ def create_temp_enhancement_workspace(
             written_files.append(full_path)
 
         # Handle removals
-        for change in enhancement_changes:
-            if change.get("action") == "delete":
-                target_path = posixpath.join(
-                    workspace_path, change.get("file", "").replace("\\", "/")
-                )
-                if os.path.exists(target_path):
-                    os.remove(target_path)
+        for deleted_path in enhancement_changes:
+            target_path = posixpath.join(
+                workspace_path, deleted_path.replace("\\", "/")
+            )
+            if os.path.exists(target_path):
+                os.remove(target_path)
     except Exception as e:
         error = f"Failed to setup enhancement temp workspace: {str(e)}"
 

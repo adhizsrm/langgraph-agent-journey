@@ -33,3 +33,4 @@ existing_test_results.txt
 metrics_result.txt
 pytest_results.txt
 tests_diag.txt
+pytest_safe.txt

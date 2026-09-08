@@ -47,9 +47,11 @@ def create_temp_workspace_node(state: GraphState) -> GraphState:
     mode = state.get("mode", "create")
     if mode == "enhance":
         source_path = state.get("source_project_path", "")
-        enhancement_changes = state.get("enhancement_changes", [])
+        # Deletions managed explicitly by PatchEngine mappings to prevent workspace lingering
+        deletions = state.get("workspace_deletions", [])
+
         workspace_path, written_files, error = create_temp_enhancement_workspace(
-            source_path, backend_files, frontend_files, enhancement_changes
+            source_path, backend_files, frontend_files, deletions
         )
     else:
         workspace_path, written_files, error = create_temp_workspace(
