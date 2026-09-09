@@ -46,6 +46,7 @@ def project_repair_node(state: GraphState) -> GraphState:
                 "validation_errors": None,
                 "execution_result": None,
                 "safety_errors": None,
+                "pending_patches": [],
             }
 
     error_text = json.dumps(all_errs) + json.dumps(exec_res)

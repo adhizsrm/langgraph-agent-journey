@@ -36,3 +36,8 @@ tests_diag.txt
 pytest_safe.txt
 
 phase6_explanation.md
+benchmark_output.txt
+final.log
+out.log
+out8.log
+test_results.txt

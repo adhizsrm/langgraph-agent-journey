@@ -45,8 +45,22 @@ def create_temp_enhancement_workspace(
         enhancement_changes = []
 
     try:
-        # Fork original workspace
-        shutil.copytree(source_path, workspace_path, dirs_exist_ok=True)
+        # Fork original workspace avoiding massive IO limits blocking latency evaluations
+        # Dynamically ignore node_modules, venv, and cache files dynamically
+        ignore_patterns = shutil.ignore_patterns(
+            "node_modules",
+            "venv",
+            ".venv",
+            ".git",
+            "__pycache__",
+            "dist",
+            "build",
+            "coverage",
+            "workspace",
+        )
+        shutil.copytree(
+            source_path, workspace_path, dirs_exist_ok=True, ignore=ignore_patterns
+        )
         # Apply modified in-memory state on top of the workspace (covers modifies/creates)
         all_files = backend_files + frontend_files
         for f in all_files:
