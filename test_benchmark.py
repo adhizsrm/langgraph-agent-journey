@@ -193,7 +193,7 @@ def test_benchmark_pipeline_enhance():
         "mode": "enhance",
         "raw_goal": "Add caching",
         "target_project_path": "c:/Users/adhis/Desktop/langgraph-agent-journey/dummy_benchmark",
-        "source_project_path": "c:/Users/adhis/Desktop/langgraph-agent-journey",  # Large project reference!
+        "source_project_path": "c:/Users/adhis/Desktop/langgraph-agent-journey/dummy_benchmark",
         "directory_listing": "",
     }
     run_benchmark("ENHANCE WORKFLOW (LARGE PROJECT)", state_enhance)

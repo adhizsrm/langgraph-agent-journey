@@ -43,9 +43,53 @@ def project_safety_node(state: GraphState) -> GraphState:
     source_path = state.get("source_project_path", "")
 
     if mode == "enhance" and source_path:
-        from app.agents.enhancement_agent import load_full_project_into_memory
 
-        orig_b, orig_f = load_full_project_into_memory(source_path)
+        def _load_project_files_safely(base_dir: str):
+            import os
+            from app.state.schemas import FileContent
+
+            b, f = [], []
+            ignore = {
+                "node_modules",
+                ".git",
+                "dist",
+                "build",
+                "venv",
+                "__pycache__",
+                "workspace",
+            }
+            for root, dirs, files in os.walk(base_dir):
+                dirs[:] = [d for d in dirs if d not in ignore]
+                for file in files:
+                    if not file.endswith(
+                        (
+                            ".js",
+                            ".jsx",
+                            ".ts",
+                            ".tsx",
+                            ".css",
+                            ".html",
+                            ".json",
+                            ".txt",
+                            ".md",
+                            ".env.example",
+                        )
+                    ):
+                        continue
+                    filepath = os.path.join(root, file)
+                    rel = os.path.relpath(filepath, base_dir).replace("\\", "/")
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f_obj:
+                            content = f_obj.read()
+                        if rel.startswith("backend/"):
+                            b.append(FileContent(path=rel, content=content))
+                        else:
+                            f.append(FileContent(path=rel, content=content))
+                    except Exception:
+                        pass
+            return b, f
+
+        orig_b, orig_f = _load_project_files_safely(source_path)
 
         original_lines = _count_lines(orig_b) + _count_lines(orig_f)
         new_lines = _count_lines(new_b) + _count_lines(new_f)

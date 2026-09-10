@@ -26,6 +26,7 @@ def discover_entry_points(base_dir: str) -> List[str]:
 
             # 1. Package.json analysis
             if file == "package.json":
+                entry_points.add(rel_path)
                 try:
                     with open(filepath, "r", encoding="utf-8") as f:
                         data = json.load(f)
