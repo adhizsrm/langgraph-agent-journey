@@ -63,3 +63,4 @@ slow_fail_utf8.log
 slow_fail.log
 results.json
 dummy_benchmark/
+git_diff.txt

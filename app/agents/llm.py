@@ -10,8 +10,8 @@ from app.state.schemas import (
     EnhancementAnalysis,
 )
 from pydantic import ValidationError
-
-load_dotenv()
+import time
+from app.telemetry import telemetry_tracker
 
 provider = os.environ.get("LLM_PROVIDER", "mistral").lower()
 
@@ -85,7 +85,7 @@ def _extract_and_parse_json(content: str) -> Dict[str, Any]:
         raise JSONSyntaxError(f"Extracted candidate was not valid JSON syntax: {e}")
 
 
-def create_structured_llm(pydantic_schema):
+def create_structured_llm(pydantic_schema, caller="unknown"):
     if provider == "openrouter":
         try:
             native_llm = llm.with_structured_output(pydantic_schema)
@@ -97,7 +97,26 @@ def create_structured_llm(pydantic_schema):
                     for attempt in range(3):
                         try:
                             # 1. Invoking natively extracts via provider structural tool-calls organically!
-                            return native_llm.invoke(current_prompt)
+                            t0 = time.time()
+                            res = native_llm.invoke(current_prompt)
+                            latency = time.time() - t0
+                            telemetry_tracker.record_llm_call(
+                                caller=caller,
+                                provider=provider,
+                                model=(
+                                    llm.model_name
+                                    if hasattr(llm, "model_name")
+                                    else "unknown"
+                                ),
+                                latency=latency,
+                                input_chars=len(current_prompt),
+                                output_chars=len(str(res)),
+                                input_tokens=None,
+                                output_tokens=None,
+                                total_tokens=None,
+                                parse_success=True,
+                            )
+                            return res
                         except Exception as e:
                             model_name = (
                                 llm.model_name
@@ -141,8 +160,27 @@ def create_structured_llm(pydantic_schema):
             last_error = None
             for attempt in range(3):
                 try:
+                    t0 = time.time()
                     res = llm.invoke(current_prompt)
+                    latency = time.time() - t0
                     content = res.content
+
+                    input_toks, output_toks, total_toks = None, None, None
+                    if (
+                        hasattr(res, "response_metadata")
+                        and "token_usage" in res.response_metadata
+                    ):
+                        tu = res.response_metadata["token_usage"]
+                        input_toks = tu.get("prompt_tokens")
+                        output_toks = tu.get("completion_tokens")
+                        total_toks = tu.get("total_tokens")
+                    elif hasattr(res, "usage_metadata") and isinstance(
+                        res.usage_metadata, dict
+                    ):
+                        tu = res.usage_metadata
+                        input_toks = tu.get("input_tokens")
+                        output_toks = tu.get("output_tokens")
+                        total_toks = tu.get("total_tokens")
 
                     try:
                         parsed_dict = _extract_and_parse_json(content)
@@ -153,6 +191,21 @@ def create_structured_llm(pydantic_schema):
                         )
                         last_error = e
                         print(f"JSONExtractionError: Attempt {attempt+1}")
+                        telemetry_tracker.record_llm_call(
+                            caller=caller,
+                            provider=provider,
+                            model=getattr(
+                                llm, "model", getattr(llm, "model_name", "unknown")
+                            ),
+                            latency=latency,
+                            input_chars=len(current_prompt),
+                            output_chars=len(content),
+                            input_tokens=input_toks,
+                            output_tokens=output_toks,
+                            total_tokens=total_toks,
+                            parse_success=False,
+                            parse_error=str(e),
+                        )
                         continue
                     except JSONSyntaxError as e:
                         current_prompt = (
@@ -161,10 +214,39 @@ def create_structured_llm(pydantic_schema):
                         )
                         last_error = e
                         print(f"JSONSyntaxError: Attempt {attempt+1} - {e}")
+                        telemetry_tracker.record_llm_call(
+                            caller=caller,
+                            provider=provider,
+                            model=getattr(
+                                llm, "model", getattr(llm, "model_name", "unknown")
+                            ),
+                            latency=latency,
+                            input_chars=len(current_prompt),
+                            output_chars=len(content),
+                            input_tokens=input_toks,
+                            output_tokens=output_toks,
+                            total_tokens=total_toks,
+                            parse_success=False,
+                            parse_error=str(e),
+                        )
                         continue
 
                     try:
                         validated = pydantic_schema.model_validate(parsed_dict)
+                        telemetry_tracker.record_llm_call(
+                            caller=caller,
+                            provider=provider,
+                            model=getattr(
+                                llm, "model", getattr(llm, "model_name", "unknown")
+                            ),
+                            latency=latency,
+                            input_chars=len(current_prompt),
+                            output_chars=len(content),
+                            input_tokens=input_toks,
+                            output_tokens=output_toks,
+                            total_tokens=total_toks,
+                            parse_success=True,
+                        )
                         return validated
                     except ValidationError as e:
                         current_prompt = (
@@ -173,6 +255,21 @@ def create_structured_llm(pydantic_schema):
                         )
                         last_error = SchemaValidationError(f"Schema mismatch: {e}")
                         print(f"SchemaValidationError: Attempt {attempt+1}")
+                        telemetry_tracker.record_llm_call(
+                            caller=caller,
+                            provider=provider,
+                            model=getattr(
+                                llm, "model", getattr(llm, "model_name", "unknown")
+                            ),
+                            latency=latency,
+                            input_chars=len(current_prompt),
+                            output_chars=len(content),
+                            input_tokens=input_toks,
+                            output_tokens=output_toks,
+                            total_tokens=total_toks,
+                            parse_success=False,
+                            parse_error=str(last_error),
+                        )
                         continue
 
                 except Exception as e:
@@ -185,8 +282,8 @@ def create_structured_llm(pydantic_schema):
 
 
 # Setup LLM with robust string-based structured output constraints
-orchestrator_llm = create_structured_llm(OrchestratorOutput)
-backend_llm = create_structured_llm(GeneratedFiles)
-frontend_llm = create_structured_llm(GeneratedFiles)
-repair_llm = create_structured_llm(RepairAnalysis)
-enhancement_llm = create_structured_llm(EnhancementAnalysis)
+orchestrator_llm = create_structured_llm(OrchestratorOutput, caller="orchestrator")
+backend_llm = create_structured_llm(GeneratedFiles, caller="backend")
+frontend_llm = create_structured_llm(GeneratedFiles, caller="frontend")
+repair_llm = create_structured_llm(RepairAnalysis, caller="repair")
+enhancement_llm = create_structured_llm(EnhancementAnalysis, caller="enhancement")

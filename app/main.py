@@ -7,6 +7,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 sys.stdout.reconfigure(encoding="utf-8")
 from app.utils.directory import get_actual_directory_listing
 from app.graph.builder import build_graph
+from app.telemetry import telemetry_tracker
+from app.agents.llm import provider, llm
 
 
 def main():
@@ -69,6 +71,15 @@ def main():
 
             checkpoint = memory.get_tuple(config)
 
+            model_name = getattr(llm, "model", getattr(llm, "model_name", "unknown"))
+            telemetry_tracker.start_run(
+                run_id=thread_id,
+                mode=mode,
+                goal=goal,
+                provider=provider,
+                model=model_name,
+            )
+
             if checkpoint:
                 print(
                     f"--- Found suspended execution state. Resuming Workflow for '{goal}' ---"
@@ -84,6 +95,10 @@ def main():
                 }
                 print(f"--- Generating Workflow for '{goal}' ---")
                 result = app_graph.invoke(initial_state, config)
+
+            status = "failed" if result.get("error") else "success"
+            telemetry_tracker.capture_workflow_state(result, status)
+            telemetry_tracker.save()
 
             if result.get("error"):
                 print(f"--- FAILED ---")
