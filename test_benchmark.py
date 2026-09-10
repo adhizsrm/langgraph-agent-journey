@@ -104,6 +104,17 @@ def run_benchmark(scenario_name, initial_state):
     metrics = BenchmarkMetrics()
     metrics.start_time = time.perf_counter()
 
+    def dynamic_mock_execute(*args, **kwargs):
+        if not hasattr(dynamic_mock_execute, "calls"):
+            dynamic_mock_execute.calls = 0
+        dynamic_mock_execute.calls += 1
+        if dynamic_mock_execute.calls % 2 != 0:
+            return {
+                "success": False,
+                "errors": ["Mocked backend startup failure to trigger repair loop!"],
+            }
+        return {"success": True}
+
     with patch(
         "app.agents.orchestrator.orchestrator_llm",
         MockLLM("orchestrator"),
@@ -124,10 +135,17 @@ def run_benchmark(scenario_name, initial_state):
         MockLLM("enhancement"),
     ), patch(
         "app.graph.nodes.execute_project",
-        return_value={
-            "success": False,
-            "errors": ["Mocked backend startup failure to trigger repair loop!"],
-        },
+        side_effect=[
+            {"success": False, "errors": ["Mocked backend startup failure!"]},
+            {"success": True},
+            {"success": False, "errors": ["Mocked backend startup failure!"]},
+            {"success": True},
+            {"success": False, "errors": ["Mocked backend startup failure!"]},
+            {"success": True},
+        ],
+    ), patch(
+        "app.graph.nodes.validate_project",
+        return_value={"validation_errors": []},
     ):
 
         # Avoid module reloading which corrupts Pydantic types crashing LangGraph

@@ -10,6 +10,9 @@ def route_initial_mode(state: GraphState) -> str:
 def route_safety(state: GraphState) -> str:
     errs = state.get("safety_errors")
     if errs and len(errs) > 0:
+        if state.get("repair_attempts", 0) >= 3:
+            print("Max repair attempts reached (Safety Phase). Aborting.")
+            return "cleanup_failed_project"
         return "project_repair"
     return "validate_generated_project"
 

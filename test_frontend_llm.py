@@ -11,9 +11,11 @@ mock_spec = """
 
 prompt = frontend_prompt.format(goal="create a simple notes app", spec=mock_spec)
 
-print("Starting Frontend LLM inference...")
-try:
-    result = frontend_llm.invoke(prompt)
-    print("SUCCESS, parsed output:", len(result.files), "files")
-except Exception as e:
-    print(f"FAILED with exception: {e}")
+
+def test_frontend_llm_inference():
+    print("Starting Frontend LLM inference...")
+    try:
+        result = frontend_llm.invoke(prompt)
+        print("SUCCESS, parsed output:", len(result.files), "files")
+    except Exception as e:
+        print(f"FAILED with exception: {e}")

@@ -12,7 +12,20 @@ from app.prompts.repair import repair_prompt
 
 def project_repair_node(state: GraphState) -> GraphState:
     print("Running Project Repair Agent...")
-    attempts = state.get("repair_attempts", 0) + 1
+
+    raw_attempts = state.get("repair_attempts", 0)
+    if raw_attempts >= 3:
+        print(
+            "Defensive Guard: Repair limit (3) exceeded inside repair node. Aborting."
+        )
+        return {
+            "error": "Defensive Guard: Max repair attempts reached natively.",
+            "workflow_status": "FAILED",
+            "repair_attempts": raw_attempts,
+            "pending_patches": [],  # Flush stale states rigorously mapping terminal edges securely!
+        }
+
+    attempts = raw_attempts + 1
     print(f"Repair attempt {attempts}/3")
 
     validation_errs = state.get("validation_errors", [])
@@ -40,7 +53,7 @@ def project_repair_node(state: GraphState) -> GraphState:
             return {
                 "error": "FINAL FAILURE: Repair loop detected lack of progress. The identical validation errors persisted after repair.",
                 "workflow_status": "FAILED",
-                "repair_attempts": 3,
+                "repair_attempts": raw_attempts,
                 "backend_files": GeneratedFiles(files=b_file_list),
                 "frontend_files": GeneratedFiles(files=f_file_list),
                 "validation_errors": None,
@@ -118,10 +131,13 @@ def project_repair_node(state: GraphState) -> GraphState:
         final_files.append({"path": path, "content": content})
         current_chars += added_len
 
+    manifest_str = "\n".join(sorted(path_list))
     files_str = (
         "RELEVANT REPAIR CONTEXT (ORDERED ROOT-CAUSE DEPENDENCIES FIRST):\n"
         + json.dumps(final_files, indent=2)
         + package_metadata_override
+        + "\n\nEXISTING PROJECT FILES:\n"
+        + manifest_str
     )
 
     modified_paths = []

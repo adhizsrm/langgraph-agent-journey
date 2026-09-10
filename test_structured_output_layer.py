@@ -75,4 +75,5 @@ def test_wrapper():
     print("Final result:", res)
 
 
-test_wrapper()
+if __name__ == "__main__":
+    test_wrapper()

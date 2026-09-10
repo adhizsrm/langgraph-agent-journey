@@ -18,12 +18,14 @@ llm = ChatOpenAI(
     temperature=0.1,
 )
 
-print("Starting native with_structured_output test...")
-try:
-    s_llm = llm.with_structured_output(TestSchema)
-    res = s_llm.invoke(
-        "Output a valid JSON containing 1 file called 'App.jsx' and code containing exactly this string: import React from 'react'; \\n console.log(\\'hello\\');"
-    )
-    print("SUCCESS: ", res)
-except Exception as e:
-    print(f"FAILED with exception: {e}")
+
+def test_with_structured_output():
+    print("Starting native with_structured_output test...")
+    try:
+        s_llm = llm.with_structured_output(TestSchema)
+        res = s_llm.invoke(
+            "Output a valid JSON containing 1 file called 'App.jsx' and code containing exactly this string: import React from 'react'; \\n console.log(\\'hello\\');"
+        )
+        print("SUCCESS: ", res)
+    except Exception as e:
+        print(f"FAILED with exception: {e}")

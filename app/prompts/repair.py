@@ -29,10 +29,13 @@ Provide your analysis and the exact file changes needed to fix the issues. Do no
 After proposing repairs, verify the resulting file graph mentally before returning.
 
 The 'file' field MUST be the relative path (e.g. backend/src/index.js).
-The 'action' field must be one of:
-- `create` = create a new file with the supplied full contents.
-- `modify` = replace/update an existing file entirely with the supplied full contents.
-- `delete` = remove an existing unnecessary/duplicate file.
+
+CRITICAL INSTRUCTION:
+The existing-file manifest is authoritative for determining whether a path already exists.
+You must respect the following schema rules exactly:
+- `CREATE`: Use ONLY when the target file DOES NOT already exist. Do not propose CREATE for a path listed in the existing-file manifest.
+- `MODIFY`: Use ONLY when the target file ALREADY EXISTS in the manifest and needs changes.
+- `DELETE`: Use ONLY when an existing file should be removed.
 
 If modifying a file or creating a new one, provide the FULL updated contents in the 'content' field.
 When topology reports a duplicate/orphan file, you MUST either wire it into the application if it is genuinely required, or delete it using the 'delete' action if it is unnecessary.

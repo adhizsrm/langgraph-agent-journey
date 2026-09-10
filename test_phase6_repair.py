@@ -44,8 +44,9 @@ def test_dependency_aware_context(monkeypatch):
     prompt = mock_llm.last_prompt
 
     # Assertions
-    # Unrelated files MUST be excluded
-    assert "backend/src/unrelated.js" not in prompt
+    # Unrelated files MUST be excluded from the file content blocks
+    relevant_context = prompt.split("EXISTING PROJECT FILES:")[0]
+    assert "backend/src/unrelated.js" not in relevant_context
     # Core error file MUST be included
     assert "backend/src/service.js" in prompt
     # Forward dependency (model) MUST be included
