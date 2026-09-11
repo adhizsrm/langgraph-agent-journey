@@ -26,7 +26,26 @@ Current Project Files (Backend & Frontend):
 {files}
 
 Provide your analysis and the exact file changes needed to fix the issues.
-If modifying a file or creating a new one, provide the FULL updated contents in the 'content' field.
-The 'file' field MUST be the relative path (e.g. backend/src/index.js).
+
+CRITICAL: You MUST return a JSON object with the exact structure below. Do not wrap it in any other top-level keys.
+
+{{
+  "analysis": "Provide a string explaining your reasoning here.",
+  "changes": [
+    {{
+      "file": "relative/path (e.g. backend/src/index.js)",
+      "action": "modify",
+      "content": "FULL FILE CONTENT"
+    }}
+  ]
+}}
+
+STRICT RULES FOR 'changes':
+- 'changes' MUST be an array.
+- Every item in the 'changes' array MUST be an object. Never put raw JSON fragments, dependency objects, strings, or partial file content directly inside the array.
+- Every change object MUST contain 'file', 'action', and 'content' keys.
+- 'action' MUST be exactly one of: 'modify', 'create', 'delete'.
+- For 'modify' or 'create', the 'content' field MUST contain the FULL, complete file content.
+- For 'delete', the 'content' field SHOULD be an empty string.
 """
 )

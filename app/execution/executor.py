@@ -1,5 +1,6 @@
 import os
 import posixpath
+import json
 from typing import Dict, Any
 
 from app.execution.process_runner import run_cmd
@@ -48,14 +49,27 @@ def execute_project(
             result["backend"] = install_res
             return result
 
-        print("  -> Building Backend...")
-        build_res = run_cmd("npm run build", backend_cwd, timeout=30)
-        if not build_res["success"]:
-            result["errors"].append(
-                "Backend npm run build failed: " + build_res["stderr"]
-            )
-            result["backend"] = build_res
-            return result
+        package_json_path = os.path.join(backend_cwd, "package.json")
+        has_build_script = False
+        if os.path.exists(package_json_path):
+            with open(package_json_path, "r", encoding="utf-8") as f:
+                try:
+                    pkg_data = json.load(f)
+                    has_build_script = "build" in pkg_data.get("scripts", {})
+                except Exception:
+                    pass
+
+        if has_build_script:
+            print("  -> Building Backend...")
+            build_res = run_cmd("npm run build", backend_cwd, timeout=30)
+            if not build_res["success"]:
+                result["errors"].append(
+                    "Backend npm run build failed: " + build_res["stderr"]
+                )
+                result["backend"] = build_res
+                return result
+        else:
+            print("  -> Skipping Backend Build (no build script in package.json)...")
 
         print("  -> Smoke Testing Backend Startup and CRUD Integration...")
         start_res = run_server_smoke_test(

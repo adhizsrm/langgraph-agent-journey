@@ -18,6 +18,12 @@ Requirements for generated package.json at `backend_root`:
 Every route handler referenced by a route MUST actually be implemented and exported by the corresponding controller module using module.exports.
 Every local import MUST correspond to an exported symbol using require().
 Before returning GeneratedFiles, ensure all route → controller → service references are internally consistent.
+
+PORT CONVENTION:
+- The Express backend MUST default to port 3000.
+- Use `process.env.PORT || 3000` in your server initialization.
+- Do not choose another default port.
+
 Specification:
 {spec}
 """

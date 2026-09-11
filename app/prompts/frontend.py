@@ -30,6 +30,31 @@ Required files to explicitly generate along with source components:
 Every local relative import in a generated source file MUST correspond to another generated file!
 If you import `./index.css` or `./App.css`, you MUST generate them.
 
+PORT AND PROXY CONVENTION:
+- Vite MUST use port 5173 for the dev server.
+- The Backend API is assumed to be running on port 3000.
+- All API calls MUST use relative paths (e.g. `fetch('/api/notes')`). Do NOT hardcode `localhost:3000` or `localhost:5000` in your API calls.
+- The backend natively exposes routes under `/api/...`, so the proxy must forward `/api/...` unchanged.
+- You must generate EXACTLY this vite.config.js file (do NOT add a 'rewrite' property):
+
+```javascript
+import {{ defineConfig }} from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({{
+  plugins: [react()],
+  server: {{
+    port: 5173,
+    proxy: {{
+      '/api': {{
+        target: 'http://localhost:3000',
+        changeOrigin: true
+      }}
+    }}
+  }}
+}});
+```
+
 Specification:
 {spec}
 """

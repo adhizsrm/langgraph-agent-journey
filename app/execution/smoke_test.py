@@ -47,6 +47,8 @@ def run_server_smoke_test(
     process_exited = False
     success_patterns = [
         "server running",
+        "server is running",
+        "running on port",
         "server started",
         "listening",
         "ready in",
