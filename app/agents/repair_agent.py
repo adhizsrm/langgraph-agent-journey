@@ -72,6 +72,15 @@ def project_repair_node(state: GraphState) -> GraphState:
     for p in path_list:
         if p in error_text:
             error_files.add(p)
+            continue
+
+        # Allow fuzzy resolution of relative imports like '../services/noteService'
+        # pointing to canonical paths like 'backend/services/noteService.js'
+        base_no_ext = os.path.splitext(p)[0].replace("\\", "/")
+        parts = base_no_ext.split("/")
+        if len(parts) >= 2:
+            if f"{parts[-2]}/{parts[-1]}" in error_text:
+                error_files.add(p)
 
     # Include fallback boundaries identifying creation files
     if not error_files and mode == "enhance":

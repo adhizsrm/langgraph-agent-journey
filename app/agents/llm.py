@@ -10,8 +10,11 @@ from app.state.schemas import (
     EnhancementAnalysis,
 )
 from pydantic import ValidationError
+from dotenv import load_dotenv
 import time
 from app.telemetry import telemetry_tracker
+
+load_dotenv()
 
 provider = os.environ.get("LLM_PROVIDER", "mistral").lower()
 
@@ -118,19 +121,69 @@ def create_structured_llm(pydantic_schema, caller="unknown"):
                             )
                             return res
                         except Exception as e:
+                            # 1. Scoped fallback for Markdown fenced JSON parsing errors
+                            if isinstance(e, ValidationError) and hasattr(e, "errors"):
+                                errs = e.errors()
+                                if errs and "input" in errs[0]:
+                                    raw_input = errs[0]["input"]
+                                    if isinstance(raw_input, str) and (
+                                        "```" in raw_input or "{" in raw_input
+                                    ):
+                                        try:
+                                            parsed = _extract_and_parse_json(raw_input)
+                                            validated = pydantic_schema.model_validate(
+                                                parsed
+                                            )
+                                            telemetry_tracker.record_llm_call(
+                                                caller=caller,
+                                                provider=provider,
+                                                model=getattr(
+                                                    llm,
+                                                    "model",
+                                                    getattr(
+                                                        llm, "model_name", "unknown"
+                                                    ),
+                                                ),
+                                                latency=time.time() - t0,
+                                                input_chars=len(current_prompt),
+                                                output_chars=len(raw_input),
+                                                input_tokens=None,
+                                                output_tokens=None,
+                                                total_tokens=None,
+                                                parse_success=True,
+                                            )
+                                            return validated
+                                        except Exception:
+                                            pass
+
                             model_name = (
                                 llm.model_name
                                 if hasattr(llm, "model_name")
                                 else "unknown"
                             )
-                            current_prompt = (
-                                prompt_str
-                                + f"\n\nCRITICAL RETRY (Attempt {attempt+2}): Your previous response failed structural extraction.\nThe parser error was:\n{e}\n\nReturn ONLY a valid response matching the required schema. Do not escape single quotes inside JSON strings as \\'. Only escape double quotes."
+
+                            err_name = type(e).__name__
+                            is_parse_error = (
+                                isinstance(e, ValidationError)
+                                or "ValidationError" in err_name
+                                or "OutputParser" in err_name
                             )
-                            last_error = SchemaValidationError(str(e))
-                            print(
-                                f"CRITICAL PARSE ERROR on Native LLM Output (Attempt {attempt + 1}) | Provider: {provider} | Model: {model_name}\nError: {e}"
-                            )
+
+                            if is_parse_error:
+                                current_prompt = (
+                                    prompt_str
+                                    + f"\n\nCRITICAL RETRY (Attempt {attempt+2}): Your previous response failed structural extraction.\nThe parser error was:\n{e}\n\nReturn ONLY a valid response matching the required schema. Do not escape single quotes inside JSON strings as \\'. Only escape double quotes."
+                                )
+                                last_error = SchemaValidationError(str(e))
+                                print(
+                                    f"CRITICAL PARSE ERROR on Native LLM Output (Attempt {attempt + 1}) | Provider: {provider} | Model: {model_name}\nError: {e}"
+                                )
+                            else:
+                                last_error = e
+                                print(
+                                    f"PROVIDER ERROR on Native LLM Output (Attempt {attempt + 1}) | Provider: {provider} | Model: {model_name}\nError: {err_name} - {str(e)[:200]}"
+                                )
+
                             continue
                     raise last_error
 

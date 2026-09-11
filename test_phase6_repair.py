@@ -110,3 +110,43 @@ def test_package_contradiction(monkeypatch):
 
     prompt = mock_llm.last_prompt
     assert "PACKAGE DEPENDENCY NOTE" in prompt
+
+
+def test_relative_import_context_resolution(monkeypatch):
+    class MockResult:
+        analysis = "mock"
+        changes = []
+
+    class MockLLM:
+        def invoke(self, prompt):
+            self.last_prompt = prompt
+            return MockResult()
+
+    mock_llm = MockLLM()
+    monkeypatch.setattr("app.agents.repair_agent.repair_llm", mock_llm)
+
+    file_map = {
+        "backend/services/noteService.js": "const notes = []; export const createNote = () => {};",
+        "backend/controllers/noteController.js": "import noteService from '../services/noteService';",
+    }
+    b_files = [FileContent(path=p, content=c) for p, c in file_map.items()]
+
+    mock_state = {
+        "mode": "create",
+        "repair_attempts": 1,
+        "backend_files": GeneratedFiles(files=b_files),
+        "frontend_files": GeneratedFiles(files=[]),
+        # The exact format of the error with relative import
+        "validation_errors": [
+            "Error: backend/controllers/noteController.js imports the default export from '../services/noteService', but it has no default export."
+        ],
+    }
+
+    project_repair_node(mock_state)
+
+    prompt = mock_llm.last_prompt
+    relevant_context = prompt.split("EXISTING PROJECT FILES:")[0]
+
+    # Verify both the filename and the actual content is parsed firmly in context
+    assert "backend/services/noteService.js" in relevant_context
+    assert "export const createNote = () => {};" in relevant_context
