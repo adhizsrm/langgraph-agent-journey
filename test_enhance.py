@@ -11,7 +11,7 @@ from app.utils.directory import get_actual_directory_listing
 def main():
     app_graph = build_graph()
 
-    source_path = "c:/Users/adhis/Desktop/langgraph-agent-journey/demo_target_project"
+    source_path = "c:/Users/adhis/Desktop/langgraph-agent-journey-main/langgraph-agent-journey/demo_target_project"
     if not os.path.exists(source_path):
         print(f"FAILED: Source project '{source_path}' does not exist.")
         return

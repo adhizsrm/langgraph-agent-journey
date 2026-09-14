@@ -56,7 +56,16 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
         goal=state.get("raw_goal", ""), chunks=json.dumps(chunks, indent=2)
     )
 
-    result = enhancement_llm.invoke(prompt)
+    try:
+        result = enhancement_llm.invoke(prompt)
+    except Exception as e:
+        return {"error": f"LLM invocation failure: {str(e)}"}
+
+    if result is None:
+        return {
+            "error": "structured-output parsing failure: Enhancement LLM returned None"
+        }
+
     print(f"Enhancement Analysis: {result.analysis}")
 
     b_files, f_files = load_full_project_into_memory(source_path)
