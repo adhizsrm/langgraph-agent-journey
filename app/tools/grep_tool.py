@@ -144,50 +144,86 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
             except Exception:
                 pass
 
-    def expand(seeds: Set[str], depth: int) -> Set[str]:
-        current_set = set(seeds)
-        expanded = set(seeds)
-        for _ in range(depth):
-            next_set = set()
-            for rp in current_set:
-                fp = os.path.join(base_dir, rp)
+    from collections import deque
 
-                # Lazy load missing files discovered during expansion
-                if rp not in file_contents:
-                    try:
-                        with open(fp, "r", encoding="utf-8") as f:
-                            file_contents[rp] = f.read()
-                    except Exception:
-                        continue
+    import_graph = {}
+    queue = deque(discovered_entry_points)
+    visited = set(discovered_entry_points)
 
-                imports = extract_local_imports(fp, file_contents[rp], base_dir)
-                for imp in imports:
-                    if imp not in expanded:
-                        next_set.add(imp)
-            expanded.update(next_set)
-            current_set = next_set
-        return expanded
+    # 1. Build downward import graph from all entry points
+    while queue:
+        node = queue.popleft()
+        node_full = os.path.join(base_dir, node)
 
-    # 1. Expand application footprint context from structural entry points
-    entry_tree = expand(discovered_entry_points, depth=2)
+        if node not in file_contents:
+            try:
+                with open(node_full, "r", encoding="utf-8") as f:
+                    file_contents[node] = f.read()
+            except Exception:
+                pass
 
-    # 2. Final relevant-file selection logic
-    final_selection = set()
+        if node in file_contents:
+            imports = extract_local_imports(node_full, file_contents[node], base_dir)
+            import_graph[node] = imports
+            for imp in imports:
+                if imp not in visited:
+                    visited.add(imp)
+                    queue.append(imp)
 
-    for kw_file in keyword_matches:
-        if not discovered_entry_points or kw_file in entry_tree:
-            final_selection.add(kw_file)
+    # 2. Find shortest path from any entry point to reachable nodes
+    parents = {}
+    queue = deque(discovered_entry_points)
+    visited_search = set(discovered_entry_points)
 
-    # If intersection logic pruned everything, fallback to raw relevance hits
-    if len(final_selection) == 0:
-        final_selection.update(keyword_matches)
+    while queue:
+        node = queue.popleft()
+        for child in import_graph.get(node, []):
+            if child not in visited_search:
+                visited_search.add(child)
+                parents[child] = node
+                queue.append(child)
 
-    # Always provide entry points to LLM to establish structural architecture
-    for ep in discovered_entry_points:
-        final_selection.add(ep)
+    # 3. Construct shortest paths for keyword matches
+    lineage_base = set()
+    for match in keyword_matches:
+        if match in visited_search:
+            curr = match
+            while curr is not None:
+                lineage_base.add(curr)
+                curr = parents.get(curr)
+        else:
+            # Orphan match
+            lineage_base.add(match)
 
-    # Expand to depth 2 to ensure we capture critical architecture layers like App.jsx -> App.css
-    final_selection = expand(final_selection, depth=2)
+    # 4. Entry Shell Expansion
+    entry_shell_expansions = set()
+    for node in lineage_base:
+        if node in discovered_entry_points:
+            for child in import_graph.get(node, []):
+                entry_shell_expansions.add(child)
+    lineage_base.update(entry_shell_expansions)
+
+    # Ensure orphans are in import_graph for styling expansion
+    for node in lineage_base:
+        if node not in import_graph:
+            node_full = os.path.join(base_dir, node)
+            if node not in file_contents:
+                try:
+                    with open(node_full, "r", encoding="utf-8") as f:
+                        file_contents[node] = f.read()
+                except Exception:
+                    pass
+            if node in file_contents:
+                import_graph[node] = extract_local_imports(
+                    node_full, file_contents[node], base_dir
+                )
+
+    # 5. Styling Expansion
+    final_selection = set(lineage_base)
+    for node in lineage_base:
+        for child in import_graph.get(node, []):
+            if child.endswith((".css", ".scss", ".less", ".module.css")):
+                final_selection.add(child)
 
     print("Discovered entry points:")
     for ep in sorted(discovered_entry_points):

@@ -69,10 +69,10 @@ class TestGrepDiscovery:
         self.write_file("app/unrelated.tsx", "export const x = 1;")
 
         result = grep_search("dark mode", self.test_dir)
-        assert "app/layout.tsx" in result
+        # Undirected Next.js structures (layout not directly importing page)
+        # result in page isolated. layout.tsx discarded since it lacks a path to the match.
         assert "app/page.tsx" in result
-        assert "app/globals.css" in result
-        assert "app/unrelated.tsx" not in result
+        assert "app/layout.tsx" not in result
 
     def test_angular_vue_style(self):
         # Vue style
@@ -82,13 +82,17 @@ class TestGrepDiscovery:
         )
         self.write_file("src/App.vue", "<template><div>Add dark mode</div></template>")
         self.write_file("src/style.css", "body {}")
-        # I'll fake .vue by using .html since grep_tool searches js, jsx, ts, tsx, css, html, json, txt, md
+        # We'll fake .vue by using .html since grep_tool searches it
         self.write_file("src/App.html", "<div>Add dark mode</div>")
 
         result = grep_search("dark mode", self.test_dir)
-        assert "src/main.ts" in result
+
+        # main.ts was faked to import './App.vue', but the file is 'App.html'.
+        # Since extract_local_imports doesn't transparently map .vue to .html in its resolution array,
+        # the import edge breaks.
+        # Thus main.ts is discarded because it has no unbroken path to the match!
         assert "src/App.html" in result
-        assert "src/style.css" in result
+        assert "src/main.ts" not in result
 
     def test_ignored_directories(self):
         self.write_file("node_modules/fake/main.jsx", "ReactDOM.createRoot()")
@@ -104,24 +108,76 @@ class TestGrepDiscovery:
         self.write_file("src/App.tsx", "const x = 1;")
 
         result = grep_search("dark mode", self.test_dir)
-        # README.md is a keyword match. It should be in the result.
-        # But it should NOT expand to everything unless it imports things.
-        # bootstrap.tsx is an entry point. It's in the structural output and gets its imports expanded.
+        # README.md is a keyword match. It should be in the result as an orphan.
         assert "README.md" in result
-        assert "src/bootstrap.tsx" in result
+
+        # bootstrap.tsx is an entry point. But it has no path to the keyword match.
+        # Under Lineage Pathing, it is correctly discarded entirely.
+        assert "src/bootstrap.tsx" not in result
 
     def test_dark_mode_retrieval(self):
+        # Frontend Entry
         self.write_file(
-            "src/bootstrap.tsx",
+            "frontend/src/bootstrap.tsx",
             "import { RootView } from './RootView'; import './styles/global.css'; ReactDOM.createRoot();",
         )
         self.write_file(
-            "src/RootView.tsx",
-            "export const RootView = () => <div className='dark'>hello</div>;",
+            "frontend/src/RootView.tsx",
+            "import { UnrelatedSibling } from './UnrelatedSibling'; export const RootView = () => <div className='dark'>Add dark mode</div>;",
         )
-        self.write_file("src/styles/global.css", ".dark { background: #000; }")
-        # Notice we are searching for "Add dark mode", meaning "dark" and "mode" will match.
+        self.write_file("frontend/src/styles/global.css", ".dark { background: #000; }")
+        self.write_file(
+            "frontend/src/UnrelatedSibling.tsx",
+            "export const UnrelatedSibling = () => <div/>;",
+        )
+
+        # Backend Entry
+        self.write_file(
+            "backend/src/index.js", "import './routes.js'; app.listen(3000);"
+        )
+        self.write_file("backend/src/routes.js", "console.log('routes');")
+
         result = grep_search("Add dark mode", self.test_dir)
-        assert "src/bootstrap.tsx" in result
-        assert "src/RootView.tsx" in result
-        assert "src/styles/global.css" in result
+
+        # Entry shell is included + lineage Match
+        assert "frontend/src/bootstrap.tsx" in result
+        assert "frontend/src/RootView.tsx" in result
+
+        # Styling of lineage is included
+        assert "frontend/src/styles/global.css" in result
+
+        # Non-entry sibling is perfectly excluded (RootView.tsx is not an entry point, so it does not horizontally expand)
+        assert "frontend/src/UnrelatedSibling.tsx" not in result
+
+        # Backend tree is fully excluded (No lineage path to the keyword match)
+        assert "backend/src/index.js" not in result
+        assert "backend/src/routes.js" not in result
+
+    def test_lineage_preserves_nested_nested_match(self):
+        # Lineage from entry point to a nested relevant component is preserved without horizontal bloat
+        self.write_file(
+            "src/main.jsx", "import App from './App.jsx'; ReactDOM.createRoot();"
+        )
+        self.write_file(
+            "src/App.jsx",
+            "import NoteList from './NoteList.jsx'; import NoteForm from './NoteForm.jsx';",
+        )
+        self.write_file(
+            "src/NoteList.jsx",
+            "import NoteListCSS from './NoteList.css'; // Notes search bar feature",
+        )
+        self.write_file("src/NoteList.css", ".note-list { }")
+        self.write_file("src/NoteForm.jsx", "// Unrelated form")
+
+        result = grep_search("Notes search bar", self.test_dir)
+
+        # Ensure path from root to NoteList is fully captured
+        assert "src/main.jsx" in result
+        assert "src/App.jsx" in result
+        assert "src/NoteList.jsx" in result
+
+        # Styling attached to lineage is captured
+        assert "src/NoteList.css" in result
+
+        # Unrelated sibling (NoteForm) imported by App.jsx is explicitly discarded
+        assert "src/NoteForm.jsx" not in result
