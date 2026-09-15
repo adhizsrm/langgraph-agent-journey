@@ -8,6 +8,9 @@ def route_initial_mode(state: GraphState) -> str:
 
 
 def route_safety(state: GraphState) -> str:
+    if state.get("error"):
+        return "cleanup_failed_project"
+
     errs = state.get("safety_errors")
     if errs and len(errs) > 0:
         return "project_repair"

@@ -56,24 +56,50 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
         goal=state.get("raw_goal", ""), chunks=json.dumps(chunks, indent=2)
     )
 
-    try:
-        result = enhancement_llm.invoke(prompt)
-    except Exception as e:
-        return {"error": f"LLM invocation failure: {str(e)}"}
+    max_retries = 3
+    result = None
+    original_prompt = prompt
 
-    if result is None:
-        return {
-            "error": "structured-output parsing failure: Enhancement LLM returned None"
-        }
+    for attempt in range(max_retries):
+        try:
+            raw_result = enhancement_llm.invoke(prompt)
+        except Exception as e:
+            return {"error": f"LLM invocation failure: {str(e)}"}
 
-    print(f"Enhancement Analysis: {result.analysis}")
+        if raw_result.get("parsing_error"):
+            err = raw_result["parsing_error"]
+            if attempt == max_retries - 1:
+                return {
+                    "error": f"LLM structured output validation failed repeatedly: {str(err)}"
+                }
+
+            raw_output = raw_result.get("raw", "")
+            prompt = (
+                original_prompt
+                + f"\n\nYour previous output failed structured validation. Here is the previous output and the validation error. Correct the previous output and return a complete replacement EnhancementAnalysis matching the schema. Do not return a partial object.\n\nPrevious Output:\n{raw_output}\n\nValidation Error:\n{str(err)}"
+            )
+            continue
+
+        result = raw_result.get("parsed")
+        if result is None:
+            return {
+                "error": "structured-output parsing failure: Enhancement LLM returned None"
+            }
+
+        break
 
     b_files, f_files = load_full_project_into_memory(source_path)
 
     safety_errors = []
+    from app.utils.path import resolve_patch_path
 
     for change in result.changes:
-        path = change.file.replace("\\\\", "/").replace("\\", "/")
+        try:
+            path = resolve_patch_path(change.file, b_files + f_files)
+        except ValueError as ve:
+            safety_errors.append(str(ve))
+            continue
+
         is_backend = path.startswith("backend/")
         target_list = b_files if is_backend else f_files
         found = False
