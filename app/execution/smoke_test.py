@@ -21,6 +21,8 @@ def run_server_smoke_test(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
     )
 
@@ -45,16 +47,20 @@ def run_server_smoke_test(
 
     startup_verified = False
     process_exited = False
-    success_patterns = [
-        "server running",
-        "server is running",
-        "running on port",
-        "server started",
-        "listening",
-        "ready in",
-        "http://",
-        "accepting connections",
+
+    # Robust readiness detector covering both port declarations and URL host blocks
+    success_regexes = [
+        re.compile(
+            r"(?:server|app).*?(?:running|started|listening|ready).*?(?:on|at|port).*?(?:localhost:|127\.0\.0\.1:|port\s*:?\s*)(\d+)",
+            re.IGNORECASE,
+        ),
+        re.compile(r"listening on port\s*:?\s*(\d+)", re.IGNORECASE),
+        re.compile(
+            r"server running on http://(?:localhost|127\.0\.0\.1):(\d+)", re.IGNORECASE
+        ),
     ]
+
+    detected_port = 3000
 
     while time.time() - start_time < timeout:
         if proc.poll() is not None:
@@ -63,9 +69,14 @@ def run_server_smoke_test(
 
         found = False
         for line in stdout_lines[-20:]:  # check recent lines
-            lower_line = line.lower()
-            if any(p in lower_line for p in success_patterns):
-                found = True
+            for regex in success_regexes:
+                match = regex.search(line)
+                if match:
+                    found = True
+                    if match.groups() and match.group(1):
+                        detected_port = int(match.group(1))
+                    break
+            if found:
                 break
 
         if found:
@@ -78,7 +89,9 @@ def run_server_smoke_test(
         import urllib.request
         import urllib.error
 
-        port = 3000
+        port = detected_port
+
+        # Fallback to general port scrape if regex failed to capture the group
         for line in stdout_lines:
             port_match = re.search(r"port\s*:?\s*(\d+)", line, re.IGNORECASE)
             if port_match:
