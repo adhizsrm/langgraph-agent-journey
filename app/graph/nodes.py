@@ -83,7 +83,14 @@ def cleanup_failed_project_node(state: GraphState) -> GraphState:
     print("Running Cleanup Node (Max Repairs Reached)...")
     workspace_path = state.get("workspace_path")
     cleanup_workspace(workspace_path)
+
+    existing_err = state.get("error", "")
+    if existing_err:
+        final_err = f"{existing_err}\nCleanup: Max 3 repair attempts reached."
+    else:
+        final_err = "FINAL FAILURE: Max 3 repair attempts reached."
+
     return {
-        "error": "FINAL FAILURE: Max 3 repair attempts reached.",
+        "error": final_err,
         "workflow_status": "FAILED",
     }

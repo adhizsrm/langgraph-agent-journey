@@ -47,9 +47,32 @@ def extract_local_imports(filepath: str, content: str, base_dir: str) -> List[st
 
 
 def grep_search(goal: str, base_dir: str) -> List[str]:
-    words = [w.lower() for w in re.findall(r"\b\w+\b", goal) if len(w) > 3]
+    stop_words = {
+        "that",
+        "this",
+        "with",
+        "from",
+        "which",
+        "where",
+        "when",
+        "what",
+        "into",
+        "then",
+        "than",
+        "have",
+        "will",
+        "should",
+        "would",
+        "could",
+        "add",
+    }
+    words = [
+        w.lower()
+        for w in re.findall(r"\b\w+\b", goal)
+        if len(w) > 3 and w.lower() not in stop_words
+    ]
     if not words:
-        words = [w.lower() for w in goal.split()]
+        words = [w.lower() for w in goal.split() if w.lower() not in stop_words]
 
     ignore_dirs = {
         "node_modules",
@@ -79,8 +102,16 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
         dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
         for file in files:
             if not file.endswith(
-                (".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".json", ".txt", ".md")
+                (".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".json", ".md")
             ):
+                continue
+
+            if file in {
+                "package-lock.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+                "bun.lockb",
+            }:
                 continue
 
             filepath = os.path.join(root, file)
@@ -192,8 +223,22 @@ def grep_search(goal: str, base_dir: str) -> List[str]:
                 lineage_base.add(curr)
                 curr = parents.get(curr)
         else:
-            # Orphan match
-            lineage_base.add(match)
+            # Orphan match.
+            # To prevent excessive noise from test, diagnostic, and history scripts containing
+            # generic keywords, orphan matches are only appended if their role/filename clearly correlates with intent.
+            file_basename = os.path.basename(match).lower()
+
+            if any(w in file_basename for w in words):
+                # Strong Intent: Filename actually explicitly maps to a search keyword
+                lineage_base.add(match)
+            elif (
+                file_basename.endswith(".md")
+                or "config" in file_basename
+                or "setup" in file_basename
+                or file_basename == "package.json"
+            ):
+                # Structural Context: Typical top-level / isolated configuration files and documentation
+                lineage_base.add(match)
 
     # 4. Entry Shell Expansion
     entry_shell_expansions = set()

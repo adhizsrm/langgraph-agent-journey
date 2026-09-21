@@ -63,6 +63,10 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
     for attempt in range(max_retries):
         try:
             raw_result = enhancement_llm.invoke(prompt)
+            with open("forensic_llm_dump.txt", "a", encoding="utf-8") as f:
+                f.write(
+                    f"\n--- ATTEMPT {attempt + 1} ---\n{json.dumps(raw_result, indent=2, default=str)}\n"
+                )
         except Exception as e:
             return {"error": f"LLM invocation failure: {str(e)}"}
 

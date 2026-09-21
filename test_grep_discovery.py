@@ -181,3 +181,78 @@ class TestGrepDiscovery:
 
         # Unrelated sibling (NoteForm) imported by App.jsx is explicitly discarded
         assert "src/NoteForm.jsx" not in result
+
+    def test_stop_words_are_ignored(self):
+        self.write_file("backend/routes/auth.ts", "Here is a file that handles auth.")
+        self.write_file(
+            "README.md", "This document explains things with some generic words."
+        )
+        self.write_file(
+            "frontend/src/App.tsx", "Here is the search feature with categories."
+        )
+
+        result = grep_search(
+            "Add a search bar that filters by categories", self.test_dir
+        )
+
+        # Stop words like 'that', 'add' are ignored
+        assert "backend/routes/auth.ts" not in result
+        assert "README.md" not in result
+
+        # Meaningful features are retrieved
+        assert "frontend/src/App.tsx" in result
+
+    def test_orphan_relevance_policy(self):
+        # 1. Real application files in the dependency graph
+        self.write_file(
+            "frontend/src/main.tsx", "import './App'; ReactDOM.createRoot();"
+        )
+        self.write_file(
+            "frontend/src/App.tsx",
+            "import { FilterPanel } from './components/FilterPanel';",
+        )
+        self.write_file(
+            "frontend/src/components/FilterPanel.tsx",
+            "Search bar that filters expenses by category",
+        )
+        self.write_file(
+            "backend/src/server.ts", "import './routes/expenses'; app.listen(3000);"
+        )
+        self.write_file(
+            "backend/src/routes/expenses.ts", "router.get('/expenses', ...)"
+        )
+
+        # 2. Unrelated noise files containing generic keywords but not in dependency graph (Orphans without intent)
+        self.write_file("backend/test_security.js", "tests expense security")
+        self.write_file("backend/test_jwt.js", "tests expense jwt filtering")
+        self.write_file("backend/check_schema.js", "checks categories")
+        self.write_file("gitlog.js", "commit add search bar")
+
+        # 3. Orphan matching filename-keyword intent
+        self.write_file("scripts/seed_expenses.js", "seed expenses data")
+
+        # 4. Orphan matching configuration document
+        self.write_file("vite.config.ts", "category config expenses")
+
+        result = grep_search(
+            "Add a search bar that filters expenses by category", self.test_dir
+        )
+
+        # Connected app files retained
+        assert "frontend/src/main.tsx" in result
+        assert "frontend/src/App.tsx" in result
+        assert "frontend/src/components/FilterPanel.tsx" in result
+        assert "backend/src/server.ts" in result
+        assert "backend/src/routes/expenses.ts" in result
+
+        # Unrelated diagnostic/test files excluded (content keyword matches failed the orphan structural role test)
+        assert "backend/test_security.js" not in result
+        assert "backend/test_jwt.js" not in result
+        assert "backend/check_schema.js" not in result
+        assert "gitlog.js" not in result
+
+        # Filename intent match retained
+        assert "scripts/seed_expenses.js" in result
+
+        # Configuration match retained
+        assert "vite.config.ts" in result

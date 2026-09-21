@@ -54,11 +54,45 @@ def project_repair_node(state: GraphState) -> GraphState:
 
         prompt = enhancement_prompt.format(goal=dynamic_goal, chunks=files_str)
 
-        result = enhancement_llm.invoke(prompt)
+        max_retries = 3
+        result = None
+        original_prompt = prompt
+
+        for attempt in range(max_retries):
+            raw_result = enhancement_llm.invoke(prompt)
+            if isinstance(raw_result, dict) and raw_result.get("parsing_error"):
+                err = raw_result["parsing_error"]
+                if attempt == max_retries - 1:
+                    raise ValueError(
+                        f"LLM structured output validation failed repeatedly: {str(err)}"
+                    )
+
+                raw_output = raw_result.get("raw", "")
+                prompt = (
+                    original_prompt
+                    + f"\n\nYour previous output failed structured validation. Here is the previous output and the validation error. Correct the previous output and return a complete replacement EnhancementAnalysis matching the schema. Do not return a partial object.\n\nPrevious Output:\n{raw_output}\n\nValidation Error:\n{str(err)}"
+                )
+                continue
+
+            result = (
+                raw_result.get("parsed") if isinstance(raw_result, dict) else raw_result
+            )
+            if result is None:
+                raise ValueError(
+                    "structured-output parsing failure: Enhancement LLM returned None"
+                )
+            break
         print(f"Repair Analysis (Patch Mode): {result.analysis}")
 
+        from app.utils.path import resolve_patch_path
+
         for change in result.changes:
-            path = change.file.replace("\\\\", "/")
+            try:
+                path = resolve_patch_path(change.file, b_file_list + f_file_list)
+            except ValueError as ve:
+                print(f"Path Resolution Error: {ve}")
+                continue
+
             modified_paths.append(path)
             is_backend = path.startswith("backend/")
             target_list = b_file_list if is_backend else f_file_list
@@ -109,8 +143,15 @@ def project_repair_node(state: GraphState) -> GraphState:
         result = repair_llm.invoke(prompt)
         print(f"Repair Analysis: {result.analysis}")
 
+        from app.utils.path import resolve_patch_path
+
         for change in result.changes:
-            path = change.file.replace("\\\\", "/")
+            try:
+                path = resolve_patch_path(change.file, b_file_list + f_file_list)
+            except ValueError as ve:
+                print(f"Path Resolution Error: {ve}")
+                continue
+
             modified_paths.append(path)
             is_backend = path.startswith("backend/")
 

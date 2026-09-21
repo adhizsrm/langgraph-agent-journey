@@ -28,11 +28,16 @@ def run_cmd(cmd: str, cwd: str, timeout: int = 15) -> Dict[str, Any]:
         }
     except subprocess.TimeoutExpired as e:
         # Clean up if timeout
+        out = (
+            e.stdout.decode(errors="replace")
+            if isinstance(e.stdout, bytes)
+            else str(e.stdout or "")
+        )
         return {
             "success": False,
             "command": cmd,
             "exit_code": -1,
-            "stdout": e.stdout.decode() if e.stdout else "",
+            "stdout": out,
             "stderr": f"TIMEOUT EXPIRED ({timeout}s)",
             "duration": timeout,
         }

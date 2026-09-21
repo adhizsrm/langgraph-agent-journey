@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional, Literal, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing_extensions import TypedDict
 
 
@@ -85,10 +85,94 @@ class EnhancementAction(BaseModel):
     )
     content: Optional[str] = Field(None, description="Full content for 'create' only")
 
+    @model_validator(mode="after")
+    def validate_action_fields(self) -> "EnhancementAction":
+        if self.action == "modify":
+            if not self.patches:
+                raise ValueError(
+                    "EnhancementAction with action='modify' MUST contain a non-empty 'patches' list."
+                )
+        return self
+
+
+class ImplementationChecklist(BaseModel):
+    requires_ui_changes: bool = Field(
+        description="Does this feature require changes to DOM/JSX?"
+    )
+    requires_stylesheet_changes: bool = Field(
+        description="Does this feature require modifying dedicated CSS/SCSS stylesheet files? Set to False when styling can be implemented using Tailwind utility classes, inline styles, CSS-in-JS, or existing styling mechanisms without modifying a stylesheet file."
+    )
+    requires_logic_state: bool = Field(
+        description="Does this change React state or logic?"
+    )
+    requires_backend_api: bool = Field(
+        description="Does this require backend API/route changes?"
+    )
+
 
 class EnhancementAnalysis(BaseModel):
     analysis: str
+    checklist: ImplementationChecklist
+    target_files: List[str] = Field(
+        description="The exact list of files you intend to modify, create, or delete"
+    )
     changes: List[EnhancementAction]
+
+    @model_validator(mode="after")
+    def validate_semantic_completeness(self) -> "EnhancementAnalysis":
+        # 1. Internal Consistency: any file changed must be declared in target_files
+        expected_files = set(self.target_files)
+        actual_files = set(action.file for action in self.changes)
+
+        extra = actual_files - expected_files
+        if extra:
+            raise ValueError(
+                f"Mismatch: Files modified {extra} but not declared in target_files."
+            )
+
+        # 2. Structural Implementation Intent
+        tf_lower = [f.lower() for f in self.target_files]
+        if self.checklist.requires_stylesheet_changes:
+            if not any(f.endswith(".css") or f.endswith(".scss") for f in tf_lower):
+                raise ValueError(
+                    "Checklist requires_stylesheet_changes=True but no .css/.scss file is in target_files."
+                )
+        else:
+            actual_changes = [action.file.lower() for action in self.changes]
+            css_changes = [
+                f for f in actual_changes if f.endswith(".css") or f.endswith(".scss")
+            ]
+            if css_changes:
+                raise ValueError(
+                    f"API Contract Violation: requires_stylesheet_changes=False but CSS/SCSS modifications were generated in: {css_changes}. "
+                    "If dedicated stylesheet changes are genuinely required, requires_stylesheet_changes must be True."
+                )
+
+        if self.checklist.requires_backend_api:
+            if not any("backend/" in f for f in tf_lower):
+                raise ValueError(
+                    "Checklist requires_backend_api=True but no backend/ file is in target_files."
+                )
+        else:
+            actual_changes = [action.file.lower() for action in self.changes]
+            backend_changes = [f for f in actual_changes if "backend/" in f]
+            if backend_changes:
+                raise ValueError(
+                    f"API Contract Violation: requires_backend_api=False but backend changes were generated in: {backend_changes}. "
+                    "If the existing backend API ALREADY supports the capability, do NOT modify the backend files. "
+                    "If backend changes are genuinely required, requires_backend_api must be True."
+                )
+
+        if self.checklist.requires_ui_changes:
+            if not any(
+                f.endswith(".jsx") or f.endswith(".tsx") or f.endswith(".html")
+                for f in tf_lower
+            ):
+                raise ValueError(
+                    "Checklist requires_ui_changes=True but no .jsx/.tsx/.html file is in target_files."
+                )
+
+        return self
 
 
 class GraphState(TypedDict):

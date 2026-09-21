@@ -19,7 +19,7 @@ def test_enhancement_agent_valid_response():
             analysis="Looks good",
             checklist={
                 "requires_ui_changes": False,
-                "requires_css_styling": False,
+                "requires_stylesheet_changes": False,
                 "requires_logic_state": False,
                 "requires_backend_api": True,
             },
@@ -104,7 +104,7 @@ def test_enhancement_agent_retry_on_validation_error():
                 analysis="Fixed",
                 checklist={
                     "requires_ui_changes": False,
-                    "requires_css_styling": False,
+                    "requires_stylesheet_changes": False,
                     "requires_logic_state": False,
                     "requires_backend_api": True,
                 },
@@ -168,7 +168,7 @@ def test_target_files_changes_mismatch():
             analysis="Mismatch test",
             checklist={
                 "requires_ui_changes": False,
-                "requires_css_styling": False,
+                "requires_stylesheet_changes": False,
                 "requires_logic_state": False,
                 "requires_backend_api": False,
             },
@@ -185,15 +185,15 @@ def test_target_files_changes_mismatch():
         )
 
 
-def test_requires_css_styling_with_no_css_target():
+def test_requires_stylesheet_changes_with_no_css_target():
     with pytest.raises(
-        ValidationError, match="requires_css_styling=True but no .css/.scss file"
+        ValidationError, match="requires_stylesheet_changes=True but no .css/.scss file"
     ):
         EnhancementAnalysis(
             analysis="CSS test",
             checklist={
                 "requires_ui_changes": False,
-                "requires_css_styling": True,
+                "requires_stylesheet_changes": True,
                 "requires_logic_state": False,
                 "requires_backend_api": False,
             },
@@ -218,7 +218,7 @@ def test_requires_backend_api_with_no_backend_target():
             analysis="Backend test",
             checklist={
                 "requires_ui_changes": False,
-                "requires_css_styling": False,
+                "requires_stylesheet_changes": False,
                 "requires_logic_state": False,
                 "requires_backend_api": True,
             },
@@ -243,7 +243,7 @@ def test_requires_ui_changes_with_no_ui_target():
             analysis="UI test",
             checklist={
                 "requires_ui_changes": True,
-                "requires_css_styling": False,
+                "requires_stylesheet_changes": False,
                 "requires_logic_state": False,
                 "requires_backend_api": False,
             },
@@ -266,7 +266,7 @@ def test_valid_search_bar_style_single_file_enhancement_passes():
         analysis="Search bar test",
         checklist={
             "requires_ui_changes": True,
-            "requires_css_styling": False,
+            "requires_stylesheet_changes": False,
             "requires_logic_state": True,
             "requires_backend_api": False,
         },
@@ -287,7 +287,7 @@ def test_valid_multi_file_enhancement_passes():
         analysis="Dark mode test",
         checklist={
             "requires_ui_changes": True,
-            "requires_css_styling": True,
+            "requires_stylesheet_changes": True,
             "requires_logic_state": True,
             "requires_backend_api": False,
         },
