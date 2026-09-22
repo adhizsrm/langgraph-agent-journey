@@ -1,3 +1,4 @@
 langchain-openai
+langchain-mistralai
 python-dotenv
 langgraph
