@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional, Literal, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, ConfigDict
 from typing_extensions import TypedDict
 
 
@@ -68,6 +68,8 @@ class RepairAnalysis(BaseModel):
 
 
 class EnhancementPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     target_content: str = Field(
         ...,
         description="The exact lines in the file to replace, including leading whitespace.",
@@ -76,8 +78,19 @@ class EnhancementPatch(BaseModel):
         ..., description="The new code to replace the target content."
     )
 
+    @model_validator(mode="after")
+    def validate_patch_changes_content(self) -> "EnhancementPatch":
+        if self.target_content == self.replacement_content:
+            raise ValueError(
+                "EnhancementPatch is a no-op: target_content and "
+                "replacement_content must be different."
+            )
+        return self
+
 
 class EnhancementAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     file: str = Field(..., description="Relative path of file")
     action: Literal["modify", "create", "delete"]
     patches: Optional[List[EnhancementPatch]] = Field(
@@ -96,6 +109,8 @@ class EnhancementAction(BaseModel):
 
 
 class ImplementationChecklist(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     requires_ui_changes: bool = Field(
         description="Does this feature require changes to DOM/JSX?"
     )
@@ -111,6 +126,8 @@ class ImplementationChecklist(BaseModel):
 
 
 class EnhancementAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     analysis: str
     checklist: ImplementationChecklist
     target_files: List[str] = Field(
@@ -128,6 +145,12 @@ class EnhancementAnalysis(BaseModel):
         if extra:
             raise ValueError(
                 f"Mismatch: Files modified {extra} but not declared in target_files."
+            )
+
+        missing = expected_files - actual_files
+        if missing:
+            raise ValueError(
+                f"Mismatch between target_files and changes: Files declared in target_files {missing} but no corresponding changes were generated."
             )
 
         # 2. Structural Implementation Intent

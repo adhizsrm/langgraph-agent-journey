@@ -10,6 +10,8 @@ For an API integration failure (HTTP 400, 404, 500), ALWAYS inspect BOTH sides:
 - Backend (src/index.js, routes, controllers)
 Verify the endpoint URLs (e.g. trailing slashes), HTTP methods, and JSON body shapes match perfectly. Fix any mismatches.
 
+CRITICAL INSTRUCTION: Do not infer a new architectural/API change when the validator provides a concrete syntax/type error. Repair the concrete error first.
+
 Original Goal: {goal}
 Project Spec: {spec}
 

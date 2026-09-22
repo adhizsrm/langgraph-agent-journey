@@ -80,18 +80,21 @@ class TestGrepDiscovery:
             "src/main.ts",
             "import { createApp } from 'vue'; import App from './App.vue'; import './style.css'; createApp(App).mount('#app');",
         )
-        self.write_file("src/App.vue", "<template><div>Add dark mode</div></template>")
+        self.write_file(
+            "src/App.vue", "<template><div>Add dark mode</div></template>"
+        )
         self.write_file("src/style.css", "body {}")
         # We'll fake .vue by using .html since grep_tool searches it
-        self.write_file("src/App.html", "<div>Add dark mode</div>")
+        self.write_file("src/DarkMode.html", "<div>Add dark mode</div>")
 
         result = grep_search("dark mode", self.test_dir)
 
-        # main.ts was faked to import './App.vue', but the file is 'App.html'.
+        # main.ts was faked to import './App.vue', but the file is 'DarkMode.html'.
         # Since extract_local_imports doesn't transparently map .vue to .html in its resolution array,
         # the import edge breaks.
         # Thus main.ts is discarded because it has no unbroken path to the match!
-        assert "src/App.html" in result
+        # DarkMode.html is retained as an orphan because its filename matches the search intent.
+        assert "src/DarkMode.html" in result
         assert "src/main.ts" not in result
 
     def test_ignored_directories(self):
@@ -183,6 +186,10 @@ class TestGrepDiscovery:
         assert "src/NoteForm.jsx" not in result
 
     def test_stop_words_are_ignored(self):
+        # Provide entry point to ensure it's not pruned as a noise orphan
+        self.write_file(
+            "frontend/src/main.tsx", "import './App'; ReactDOM.createRoot();"
+        )
         self.write_file("backend/routes/auth.ts", "Here is a file that handles auth.")
         self.write_file(
             "README.md", "This document explains things with some generic words."

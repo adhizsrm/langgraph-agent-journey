@@ -38,7 +38,7 @@ def route_frontend_agent(state: GraphState) -> str:
 
 
 def route_validation(state: GraphState) -> str:
-    if state.get("validation_errors"):
+    if state.get("validation_errors") or state.get("safety_errors"):
         if state.get("repair_attempts", 0) >= 3:
             print("Max repair attempts reached (Validation Phase). Aborting.")
             return "cleanup_failed_project"

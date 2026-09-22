@@ -47,6 +47,42 @@ def load_full_project_into_memory(
     return b_files, f_files
 
 
+def apply_patch_safely(source: str, target: str, replacement: str) -> str:
+    """Applies a patch safely, falling back to a normalized string match if exact fails."""
+    if target in source:
+        if source.count(target) == 1:
+            return source.replace(target, replacement)
+        else:
+            raise ValueError("Multiple exact matches found, ambiguous target")
+
+    # Normalized search fallback
+    import re
+
+    tokens = re.split(r"(\s+)", target)
+    if not tokens:
+        raise ValueError("Empty target")
+
+    regex_parts = []
+    for token in tokens:
+        if token == "":
+            continue
+        if token.strip():
+            regex_parts.append(re.escape(token))
+        else:
+            regex_parts.append(r"\s+")
+
+    pattern = re.compile("".join(regex_parts))
+    matches = list(pattern.finditer(source))
+
+    if len(matches) == 0:
+        raise ValueError("Patch target not found (even normalized)")
+    if len(matches) > 1:
+        raise ValueError("Multiple normalized matches found, ambiguous target")
+
+    start, end = matches[0].span()
+    return source[:start] + replacement + source[end:]
+
+
 def enhancement_agent_node(state: GraphState) -> GraphState:
     print("Running Enhancement Agent Node...")
     chunks = state.get("enhancement_chunks", [])
@@ -117,15 +153,27 @@ def enhancement_agent_node(state: GraphState) -> GraphState:
                 if f.path == path:
                     found = True
                     if change.patches:
+                        updated_content = f.content
+                        action_success = True
                         for patch in change.patches:
-                            if patch.target_content in f.content:
-                                f.content = f.content.replace(
-                                    patch.target_content, patch.replacement_content
+                            try:
+                                updated_content = apply_patch_safely(
+                                    updated_content,
+                                    patch.target_content,
+                                    patch.replacement_content,
                                 )
-                            else:
+                            except ValueError as e:
+                                action_success = False
                                 safety_errors.append(
-                                    f"Patch target not found in {path}: {patch.target_content[:30]}..."
+                                    f"{str(e)} in {path}: {patch.target_content[:30]}..."
                                 )
+                        if action_success and updated_content != f.content:
+                            f.content = updated_content
+                        elif action_success and updated_content == f.content:
+                            # It's an effective no-op, shouldn't happen with strict validator but guard nevertheless
+                            safety_errors.append(
+                                f"Action parsed but produced no changes in {path}"
+                            )
                     break
             if not found:
                 safety_errors.append(

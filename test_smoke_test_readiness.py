@@ -37,13 +37,16 @@ class MockProcess:
     def terminate(self):
         pass
 
+    def kill(self):
+        pass
+
     def wait(self, timeout):
         pass
 
 
 def test_readiness_recognized_server_running_on_http_localhost_3001():
     with patch("app.execution.smoke_test.subprocess.Popen") as mock_popen, patch(
-        "app.execution.smoke_test.urllib.request.urlopen"
+        "urllib.request.urlopen"
     ) as mock_urlopen:
 
         mock_proc = MockProcess(
@@ -71,7 +74,7 @@ def test_readiness_recognized_server_running_on_http_localhost_3001():
 
 def test_readiness_recognized_server_started_on_http_localhost_3000():
     with patch("app.execution.smoke_test.subprocess.Popen") as mock_popen, patch(
-        "app.execution.smoke_test.urllib.request.urlopen"
+        "urllib.request.urlopen"
     ) as mock_urlopen:
 
         mock_proc = MockProcess(["server started on http://localhost:3000"])
@@ -86,7 +89,7 @@ def test_readiness_recognized_server_started_on_http_localhost_3000():
 
 def test_readiness_recognized_listening_on_port_3000():
     with patch("app.execution.smoke_test.subprocess.Popen") as mock_popen, patch(
-        "app.execution.smoke_test.urllib.request.urlopen"
+        "urllib.request.urlopen"
     ) as mock_urlopen:
 
         mock_proc = MockProcess(
@@ -103,7 +106,7 @@ def test_readiness_recognized_listening_on_port_3000():
 
 def test_readiness_not_detected_unrelated_output():
     with patch("app.execution.smoke_test.subprocess.Popen") as mock_popen, patch(
-        "app.execution.smoke_test.urllib.request.urlopen"
+        "urllib.request.urlopen"
     ) as mock_urlopen:
 
         mock_proc = MockProcess(["just some random logs", "compiling...", "done."])
@@ -119,11 +122,11 @@ def test_readiness_not_detected_unrelated_output():
 
 def test_preserve_existing_readiness_behavior():
     with patch("app.execution.smoke_test.subprocess.Popen") as mock_popen, patch(
-        "app.execution.smoke_test.urllib.request.urlopen"
+        "urllib.request.urlopen"
     ) as mock_urlopen:
 
-        # Test an older style output
-        mock_proc = MockProcess(["app ready in 1500ms..."])
+        # Test an older style output (updated to include port to satisfy current regex)
+        mock_proc = MockProcess(["app ready on port 3000 in 1500ms..."])
         mock_popen.return_value = mock_proc
 
         res = run_server_smoke_test(

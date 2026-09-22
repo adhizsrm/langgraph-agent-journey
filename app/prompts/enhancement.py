@@ -35,7 +35,13 @@ IMPORTANT ENHANCEMENT CONTRACT RULES:
    - Styling needed in JSX/TSX through Tailwind/inline/existing classes only: requires_stylesheet_changes = False
    - A dedicated .css/.scss stylesheet must be modified or created: requires_stylesheet_changes = True
 6. Your `target_content` MUST exist exactly as-is inside the original file snippet.
-7. If base context files are missing from your chunks but you definitively require them to attach logic, output an error array inside your analysis instead of hallucinating logic.
+7. SYNTACTIC PATCH BOUNDARIES:
+   - `replacement_content` MUST replace ONLY the specific target block and nothing outside it.
+   - Do NOT repeat the lines immediately before or after `target_content` in your `replacement_content` unless actively modifying them.
+   - Repeating unchanged boundary lines (like `}});` or HTML tags) often causes syntax corruption because they double-up upon injection.
+   - The merged file must remain syntactically valid TypeScript/JSX without dangling closing braces.
+   - Prefer small, localized separate patches over replacing huge chunks of code.
+8. If base context files are missing from your chunks but you definitively require them to attach logic, output an error array inside your analysis instead of hallucinating logic.
 
 IMPORTANT: The `analysis` field is explanatory text only.
 It is NOT executed.
@@ -91,7 +97,20 @@ Before returning the response, verify:
 3. Every file required for the implementation appears in `changes`.
 4. No required implementation step exists only in `analysis`.
 5. Every `modify` action has non-empty patches.
-6. Every patch has exact `target_content` and `replacement_content`.
+6. `target_content` and `replacement_content` MUST be completely different (no-op patches are strictly forbidden).
 7. Every `create` action contains complete file content.
-8. Existing unrelated functionality is preserved."""
+8. Existing unrelated functionality is preserved.
+9. EXACT Schema Exemplar for the `changes` array (Do NOT put `patches` at the root outside `changes`, do NOT nest `changes`):
+[
+  {{
+    "file": "path/to/file.tsx",
+    "action": "modify",
+    "patches": [
+      {{
+        "target_content": "exact lines to match",
+        "replacement_content": "new code"
+      }}
+    ]
+  }}
+]"""
 )

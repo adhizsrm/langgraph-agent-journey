@@ -51,6 +51,21 @@ def project_safety_node(state: GraphState) -> GraphState:
             f"Destruction Safety Triggered: Component '{m}' was unexpectedly wiped from the codebase."
         )
 
+    # Ensure deterministic enhancement completeness
+    actually_modified = 0
+    orig_map = {f.path: f.content for f in orig_b + orig_f}
+    new_map = {f.path: f.content for f in b_files.files + f_files.files}
+    for p in orig_names:
+        if p in new_map and orig_map[p] != new_map[p]:
+            actually_modified += 1
+
+    enhancement_changes = state.get("enhancement_changes", [])
+    if enhancement_changes and actually_modified == 0:
+        safety_errors.append(
+            "Completeness Failure: The LLM generated enhancement actions, but zero files were actually "
+            "modified structurally. The requested enhancement feature was not implemented."
+        )
+
     if safety_errors:
         return {"safety_errors": safety_errors}
 

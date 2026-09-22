@@ -417,3 +417,90 @@ def test_enhancement_agent_preserves_baseline_css():
     # The good patch must preserve unrelated baseline styles
     assert ".app {" in good_result
     assert ".dark-mode-toggle {" in good_result
+
+
+def test_strict_nested_changes_validation():
+    # Prove that an unexpected nested "changes" field inside EnhancementAction
+    # (or anywhere) throws ValidationError due to extra="forbid"
+    with pytest.raises(ValidationError) as exc_info:
+        EnhancementAction(
+            **{
+                "file": "foo.ts",
+                "action": "modify",
+                "patches": [{"target_content": "a", "replacement_content": "b"}],
+                "changes": [{"file": "foo.ts", "patches": []}],
+            }
+        )
+
+    assert "Extra inputs are not permitted" in str(exc_info.value) or "changes" in str(
+        exc_info.value
+    )
+
+
+def test_enhancement_agent_strict_nested_changes_retry():
+    state = {
+        "raw_goal": "Add search bar",
+        "enhancement_chunks": [],
+        "source_project_path": "fake/path",
+    }
+
+    mock_llm = MagicMock()
+    # First call: LLM generates the invalid recursive payload (will fail parse step internally)
+    # The framework converts validation failures to a re-prompt.
+    # Second call: LLM corrects it.
+    mock_llm.invoke.side_effect = [
+        {
+            "raw": '{"analysis": "test", "checklist": {"requires_ui_changes": true, "requires_stylesheet_changes": false, "requires_logic_state": true, "requires_backend_api": false}, "target_files": ["foo.tsx"], "changes": [{"file": "foo.tsx", "action": "modify", "patches": [{"target_content": "a", "replacement_content": "b"}], "changes": [{"file": "foo.tsx", "action": "modify", "patches": [{"target_content": "c", "replacement_content": "d"}]}]}]}',
+            "parsed": None,
+            "parsing_error": ValidationError.from_exception_data(
+                "Extra inputs are not permitted",
+                [
+                    {
+                        "type": "extra_forbidden",
+                        "loc": ("changes", 0, "changes"),
+                        "msg": "Extra inputs are not permitted",
+                        "input": [],
+                    }
+                ],
+            ),
+        },
+        {
+            "raw": '{"analysis": "test", "checklist": {"requires_ui_changes": true, "requires_stylesheet_changes": false, "requires_logic_state": true, "requires_backend_api": false}, "target_files": ["foo.tsx"], "changes": [{"file": "foo.tsx", "action": "modify", "patches": [{"target_content": "a", "replacement_content": "b"}, {"target_content": "c", "replacement_content": "d"}]}]}',
+            "parsed": EnhancementAnalysis(
+                analysis="test",
+                checklist={
+                    "requires_ui_changes": True,
+                    "requires_stylesheet_changes": False,
+                    "requires_logic_state": True,
+                    "requires_backend_api": False,
+                },
+                target_files=["foo.tsx"],
+                changes=[
+                    EnhancementAction(
+                        file="foo.tsx",
+                        action="modify",
+                        patches=[
+                            EnhancementPatch(
+                                target_content="a", replacement_content="b"
+                            ),
+                            EnhancementPatch(
+                                target_content="c", replacement_content="d"
+                            ),
+                        ],
+                    )
+                ],
+            ),
+            "parsing_error": None,
+        },
+    ]
+
+    with patch("app.agents.enhancement_agent.enhancement_llm", mock_llm):
+        with patch(
+            "app.agents.enhancement_agent.load_full_project_into_memory",
+            return_value=([], []),
+        ):
+            result = enhancement_agent_node(state)
+            # Should have parsed exactly 2 patches in the single action
+            assert "error" not in result
+            assert len(result["enhancement_changes"][0]["patches"]) == 2
+            assert mock_llm.invoke.call_count == 2
