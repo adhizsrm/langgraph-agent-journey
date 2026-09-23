@@ -1,113 +1,699 @@
 # LangGraph Agent Journey
 
-A phase-by-phase build of an LLM agent using [LangGraph](https://github.com/langchain-ai/langgraph), starting from a single raw LLM call and growing into a multi-agent, orchestrated system that eventually plugs into an existing TypeScript/React RAG application.
+A phase-by-phase journey from a minimal LLM application to a **LangGraph-based code enhancement agent** that can analyze an existing project, understand a natural-language enhancement request, modify the relevant files, validate the result, and repair failures.
 
-Each phase is its own commit, so the git history doubles as a build log. If you're coming from JavaScript/Node/React (like I was), the [Coming from JS/Node](#coming-from-jsnode) section below maps the unfamiliar Python bits to things you already know.
+The repository started as a hands-on exploration of LangGraph fundamentals — LLM calls, tools, state, nodes, conditional routing, evaluation, and multi-agent orchestration — and evolved into a practical **LLM-powered software enhancement workflow**.
 
-## Why this repo exists
+The goal is not just to generate code with an LLM, but to build a workflow where:
 
-I wanted to learn LangGraph the way I actually learn best: build the smallest possible thing, get it working, then add exactly one new concept at a time. Each phase is deliberately minimal — the point isn't the calculator or the product catalog, it's understanding State, Nodes, Edges, and Conditional Edges well enough to build real agents on top of them.
+> **The LLM proposes changes; deterministic systems decide whether those changes are safe and valid.**
 
-## Roadmap
+---
 
-| Phase | Focus |
-|---|---|
-| 1 | Minimal Python + LLM application (a single `.invoke()` call) |
-| 2 | Add a tool, manually inspect and run tool calls |
-| 3 | Introduce LangGraph — State, Nodes, a fixed (hardcoded) Edge path |
-| 4 | Add conditional routing — the agent decides tool vs. done |
-| 5 | Make it goal-oriented — multi-step goals via a system prompt + loop |
-| 6 | Add a second tool, dynamic tool dispatch by name |
-| 7 | Add an evaluator node — critique the result, retry on failure |
-| 8 | Final single-agent demo — polished output, recursion limits, error handling |
-| 9+ | Multiple specialist agents, each with one responsibility |
-| 10+ | Orchestrator/delegator agent — breaks down goals, delegates, collects results |
-| 11+ | Programmatic agent creation from agent definitions (responsibilities, tools, scopes) |
-| 12+ | Code-ownership proof of concept — frontend/backend/db/testing agents |
-| 13+ | Define the communication boundary with the existing TS/React RAG app |
-| 14+ | Integrate LangGraph agent with RAG as a callable tool |
-| 15 | End-to-end testing, regression testing, full documentation |
+## What this project does
+
+Given an existing application and a request such as:
+
+```text
+Add a search bar that filters expenses by category.
+```
+
+the system:
+
+1. Analyzes the project structure.
+2. Discovers relevant files and entry points.
+3. Retrieves bounded code context.
+4. Chunks the selected code into manageable context.
+5. Sends the relevant context and request to an Enhancement Agent.
+6. Validates the LLM's structured response with Pydantic.
+7. Safely applies the proposed patches.
+8. Checks that the requested changes actually modified the project.
+9. Creates an isolated temporary workspace.
+10. Runs backend/frontend validation.
+11. Runs build and smoke tests.
+12. Invokes a Repair Agent when validation fails.
+13. Retries repair up to a defined limit.
+14. Promotes the enhanced project only when the workflow succeeds.
+
+The system is designed to avoid situations where an LLM produces syntactically valid output but the requested feature is only partially implemented.
+
+---
+
+## Architecture
+
+```text
+User Request
+     │
+     ▼
+Project Discovery
+     │
+     ├── Entry-point discovery
+     ├── Keyword/relevance search
+     ├── Import/dependency discovery
+     └── HTML/CSS/reference discovery
+     │
+     ▼
+Relevant Files
+     │
+     ▼
+Chunker
+     │
+     ▼
+Enhancement Agent
+     │
+     ▼
+Structured LLM Output
+     │
+     ▼
+Pydantic Validation
+     │
+     ├── Schema validation
+     ├── Extra-field rejection
+     ├── No-op detection
+     └── Change/file consistency
+     │
+     ▼
+Safe Patch Application
+     │
+     ├── Exact matching
+     ├── Normalized matching
+     ├── Ambiguous-match rejection
+     └── Atomic patching
+     │
+     ▼
+Safety Validation
+     │
+     ▼
+Temporary Workspace
+     │
+     ▼
+Project Validation
+     │
+     ├── Backend validation
+     ├── Frontend build
+     └── Smoke testing
+     │
+     ├───────────────┐
+     │               │
+   PASS            FAIL
+     │               │
+     ▼               ▼
+ Promotion      Repair Agent
+                     │
+                     ▼
+               Retry validation
+                     │
+                     ▼
+                 PASS / FAIL
+```
+
+---
+
+## Core design principle
+
+The project deliberately separates **LLM reasoning** from **system authority**.
+
+### LLM
+
+The LLM is responsible for:
+
+- understanding the user's request
+- identifying the intended implementation
+- proposing code changes
+- producing structured patches
+- diagnosing failures during repair
+
+### Deterministic system
+
+The application is responsible for:
+
+- deciding which files are relevant
+- validating the LLM output
+- rejecting malformed structures
+- rejecting no-op patches
+- safely applying patches
+- detecting incomplete modifications
+- running builds and tests
+- deciding whether the enhancement succeeded
+- deciding whether repair is required
+
+This prevents the workflow from treating:
+
+```text
+"the LLM generated something"
+```
+
+as equivalent to:
+
+```text
+"the requested enhancement was successfully implemented."
+```
+
+---
+
+## Retrieval vs Chunking
+
+One important architectural distinction is:
+
+> **Retrieval decides which files matter. Chunking decides how their contents are packaged.**
+
+The current chunking implementation is primarily deterministic rather than LLM-driven.
+
+The workflow first identifies relevant files using deterministic discovery and dependency/relevance logic. The selected file contents are then divided into bounded chunks before being provided to the Enhancement Agent.
+
+The chunker does not independently perform semantic ranking of every chunk.
+
+In simplified form:
+
+```text
+Project
+   ↓
+Which files matter?
+   ↓
+Retrieval
+   ↓
+Relevant files
+   ↓
+How should their contents be packaged?
+   ↓
+Chunker
+   ↓
+LLM context
+```
+
+---
+
+## Safe patching
+
+LLM-generated code is treated as untrusted input.
+
+The system does not blindly write the generated changes to the project.
+
+### Atomic patching
+
+Multiple patches are prepared in memory first.
+
+For example:
+
+```text
+Patch 1 → success
+Patch 2 → success
+Patch 3 → failure
+```
+
+The system does **not** write Patch 1 and Patch 2 to the real file.
+
+Instead:
+
+```text
+All patches succeed
+      │
+      ▼
+Write final result
+```
+
+or:
+
+```text
+Any patch fails
+      │
+      ▼
+Discard changes
+      │
+      ▼
+Original file remains unchanged
+```
+
+This prevents partially applied LLM changes from corrupting the project.
+
+### Patch safety checks
+
+The patching layer includes checks for:
+
+- missing patch targets
+- ambiguous matches
+- normalized whitespace matching
+- no-op patches
+- atomic application
+- effective modification detection
+
+---
+
+## Structured LLM output
+
+The Enhancement Agent uses structured output validated with Pydantic.
+
+The LLM is expected to return a structure containing:
+
+```text
+EnhancementAnalysis
+├── target_files
+├── changes
+│   ├── file
+│   ├── action
+│   └── patches
+│       ├── target_content
+│       └── replacement_content
+└── implementation_checklist
+```
+
+Unexpected fields are rejected rather than silently ignored.
+
+This is important because an LLM can produce structurally incorrect JSON that still looks superficially valid.
+
+For example, a malformed response containing nested `changes` in the wrong location should fail validation rather than having the unexpected data silently discarded.
+
+---
+
+## No-op detection
+
+A patch is invalid when:
+
+```text
+target_content == replacement_content
+```
+
+because it does not actually change the code.
+
+This prevents the model from generating patches merely to describe existing behavior.
+
+For example, if an existing generic handler already supports:
+
+```typescript
+setFilters(prev => ({ ...prev, [name]: value }));
+```
+
+the model should not create a patch replacing that code with the exact same code.
+
+Instead, it should leave the existing implementation untouched.
+
+---
+
+## False-success prevention
+
+One of the major problems discovered during real-world testing was **false success**.
+
+An LLM could produce a malformed or incomplete structure, and because unexpected fields were previously ignored, part of the intended implementation could be silently discarded.
+
+That could result in:
+
+```text
+LLM output
+   ↓
+Partial changes applied
+   ↓
+No obvious exception
+   ↓
+Workflow reports SUCCESS
+```
+
+The system was hardened so that:
+
+```text
+Malformed output
+       ↓
+Pydantic validation failure
+       ↓
+Retry / failure
+```
+
+and:
+
+```text
+Incomplete modification
+       ↓
+Safety validation
+       ↓
+Failure / repair
+```
+
+The overall principle is:
+
+> **A workflow should fail safely rather than report success incorrectly.**
+
+---
+
+## Repair Agent
+
+The Repair Agent is an exception path rather than the normal implementation path.
+
+The intended workflow is:
+
+```text
+Enhancement
+     ↓
+Validation
+     ↓
+PASS ───────────────► Done
+     │
+     ▼
+   FAIL
+     │
+     ▼
+Repair Agent
+     │
+     ▼
+Re-validation
+```
+
+The Repair Agent receives concrete validation information such as:
+
+- compiler errors
+- syntax errors
+- build failures
+- smoke-test failures
+- patch/safety errors
+
+The repair process prioritizes the actual error reported by the validation system rather than making speculative architectural changes.
+
+Repair attempts are bounded so that the system does not enter an infinite repair loop.
+
+---
+
+## Validation layers
+
+Different layers answer different questions.
+
+### Pydantic validation
+
+> Is the LLM's response structurally valid?
+
+### Patch validation
+
+> Can the requested changes be safely applied?
+
+### Safety validation
+
+> Did the expected project files actually change?
+
+### Compiler/build validation
+
+> Does the resulting project still compile/build?
+
+### Smoke testing
+
+> Can the resulting application actually start/respond as expected?
+
+Therefore:
+
+> **Patch success is not the same as enhancement success.**
+
+A patch can be applied successfully while the resulting application still fails to build.
+
+---
+
+## LangGraph
+
+LangGraph provides the workflow orchestration layer.
+
+The project uses concepts including:
+
+- State
+- Nodes
+- Edges
+- Conditional routing
+- Tool calling
+- Agent nodes
+- Evaluator/validator nodes
+- Multi-agent orchestration
+- Retry/repair flows
+- State persistence/checkpointing
+
+The graph allows the enhancement workflow to move from:
+
+```text
+Request
+   ↓
+Enhance
+   ↓
+Validate
+```
+
+to a controlled workflow such as:
+
+```text
+Request
+   ↓
+Discover
+   ↓
+Retrieve
+   ↓
+Enhance
+   ↓
+Validate
+   ↓
+     ┌── PASS ──► Promote
+     │
+   FAIL
+     ↓
+  Repair
+     ↓
+ Validate
+     ↓
+ PASS / FAIL
+```
+
+---
 
 ## Project structure
 
-```
+The repository has evolved beyond the original single-file phase demonstrations.
+
+A simplified structure is:
+
+```text
 langgraph-agent-journey/
-├── agent_journey.py   # all 8 phases live here, one function per phase
-├── requirements.txt   # Python dependencies (like package.json)
-├── .env.example        # template for required environment variables
+│
+├── app/
+│   ├── agents/
+│   │   ├── enhancement_agent.py
+│   │   └── repair_agent.py
+│   │
+│   ├── graph/
+│   │   ├── routing.py
+│   │   └── safety_node.py
+│   │
+│   ├── prompts/
+│   │   ├── enhancement.py
+│   │   └── repair.py
+│   │
+│   ├── state/
+│   │   └── schemas.py
+│   │
+│   └── utils/
+│
+├── tests/
+├── requirements.txt
+├── .env.example
 ├── .gitignore
 └── README.md
 ```
 
-Each phase is its own function (`phase1()` through `phase8()`) inside `agent_journey.py`, kept self-contained so any single phase can be read top-to-bottom without jumping around the file. Run one phase at a time from the command line:
+The repository also contains supporting diagnostic, validation, and experimentation scripts used during development.
 
-```bash
-python agent_journey.py 1   # runs phase1()
-python agent_journey.py 5   # runs phase5()
-python agent_journey.py 8   # runs phase8()
-```
-
-The git history still reflects the phase-by-phase build — each commit adds that phase's function to `agent_journey.py` without rewriting the ones before it.
+---
 
 ## Getting started
 
+### 1. Clone the repository
+
 ```bash
-# 1. Clone
-git clone https://github.com/<your-username>/langgraph-agent-journey.git
+git clone https://github.com/adhizsrm/langgraph-agent-journey.git
 cd langgraph-agent-journey
-
-# 2. Create a virtual environment (isolated package folder, like node_modules)
-python -m venv venv
-
-# 3. Activate it — do this every time you open a new terminal
-source venv/bin/activate        # Mac/Linux
-venv\Scripts\activate           # Windows
-
-# 4. Install dependencies (like npm install)
-pip install -r requirements.txt
-
-# 5. Add your environment variables
-cp .env.example .env
-# then fill in OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL
-
-# 6. Run any phase (like node index.js -- with an argument)
-python agent_journey.py 1
 ```
 
-## Coming from JS/Node
+### 2. Create a virtual environment
 
-| Python | JS/Node equivalent |
+```bash
+python -m venv venv
+```
+
+### 3. Activate it
+
+Windows:
+
+```powershell
+venv\Scripts\activate
+```
+
+Mac/Linux:
+
+```bash
+source venv/bin/activate
+```
+
+### 4. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 5. Configure environment variables
+
+```bash
+copy .env.example .env
+```
+
+On Mac/Linux:
+
+```bash
+cp .env.example .env
+```
+
+Configure the required LLM provider settings in `.env`.
+
+### 6. Run the application
+
+```bash
+python -m app.main
+```
+
+The CLI can then be used to run the enhancement workflow against a target project.
+
+---
+
+## Development and testing
+
+The project includes regression tests covering important parts of the enhancement workflow.
+
+Examples include:
+
+```bash
+python test_enhancement_parsing.py
+python test_grep_discovery.py
+python test_smoke_test_readiness.py
+```
+
+The test suite is particularly important for preventing regressions in:
+
+- structured LLM parsing
+- retrieval/discovery
+- patch safety
+- validation
+- smoke-test readiness
+
+Real-world end-to-end testing is also used because passing unit tests alone does not guarantee that an LLM-generated enhancement will behave correctly in a real project.
+
+---
+
+## Evolution of the project
+
+The repository originally followed a phase-by-phase learning path:
+
+| Phase | Focus |
 |---|---|
-| `venv/` folder | `node_modules/` |
-| `requirements.txt` | `package.json` dependencies |
-| `pip install -r requirements.txt` | `npm install` |
-| `source venv/bin/activate` | *(no direct equivalent — see note below)* |
-| `python phase1.py` | `node phase1.js` |
-| `.env` | `.env` (same idea, same tool — `dotenv`) |
+| 1 | Minimal Python + LLM application |
+| 2 | Tool calling |
+| 3 | LangGraph State and Nodes |
+| 4 | Conditional routing |
+| 5 | Goal-oriented multi-step execution |
+| 6 | Multiple tools and dynamic dispatch |
+| 7 | Evaluation and retry |
+| 8 | Single-agent lifecycle |
+| 9+ | Multiple specialist agents |
+| 10+ | Orchestrator/delegator architecture |
+| 11+ | Programmatic agent creation |
+| 12+ | Code ownership across frontend/backend/database/testing |
+| 13+ | Communication boundary with an existing application |
+| 14+ | LangGraph integration with application workflows |
+| 15+ | End-to-end testing and reliability |
+| Current | LLM-powered code enhancement and repair workflow |
 
-The one real difference: npm always resolves packages from `node_modules` automatically. Python doesn't — you have to explicitly "activate" a venv so `python`/`pip` know to use *this* project's packages instead of whatever's installed system-wide. Forgetting to activate is the #1 cause of `ModuleNotFoundError`.
+The early phases remain important because they explain how the current architecture evolved.
+
+---
 
 ## Relationship to `context-engine-chatbot`
 
-This repo is the *learning ground* — every concept here (single agent → tools → conditional routing → goal-oriented loops → evaluation → multi-agent → orchestrator) is deliberately built with throwaway tools (a calculator, a fake product catalog) so the LangGraph mechanics stay front and center.
+`context-engine-chatbot` was the original application that motivated the move from basic LangGraph experiments toward a more practical agent architecture.
 
-Once these patterns are solid, the actual integration work happens inside the existing [`context-engine-chatbot`](../context-engine-chatbot) repo — that's the TypeScript + React RAG chatbot already running Ollama (`nomic-embed-text`) for embeddings and Weaviate as the vector store. Rather than standing up a separate Python service, the plan is to bring Python/LangGraph into that codebase directly and wire retrieval (Weaviate) in as a LangGraph tool — the same shape as `get_product_price` in Phase 6, just swapping the fake catalog lookup for a real Weaviate query.
+It is a separate TypeScript/React project containing a RAG pipeline using technologies such as:
 
-This repo does not call or depend on `context-engine-chatbot` — it's a standalone sandbox. The two repos only connect once the roadmap reaches Phases 13–14 (27–28 Aug), when patterns proven here get carried over.
+- TypeScript
+- React
+- Ollama
+- Weaviate
+- semantic retrieval
+- hybrid retrieval
+- reranking
+
+This repository became the learning and experimentation ground for the Python/LangGraph side of the system.
+
+The two repositories are conceptually related, but this repository is independently executable.
+
+---
 
 ## Tech stack
 
-**This repo (LangGraph journey)**
-- **LangGraph** — state graph orchestration for the agent
-- **LangChain (langchain-openai)** — LLM client, tool binding
-- **OpenRouter** — OpenAI-compatible API used as the LLM provider
-- **Python** — 3.10+
+### Core
 
-**`context-engine-chatbot` (existing, separate repo — integration target)**
-- **TypeScript + React** — application layer
-- **Ollama (`nomic-embed-text`)** — embedding model
-- **Weaviate** — vector database
+- **Python**
+- **LangGraph**
+- **LangChain**
+- **Pydantic**
 
-## Status
+### LLM
 
-🚧 In progress — actively building through the roadmap above. See commit history for phase-by-phase progress.
+- **OpenRouter**
+- OpenAI-compatible LLM APIs
+- Mistral / Ministral models used during development
+
+### Target applications
+
+The enhancement workflow is designed to work with real application codebases, including projects using technologies such as:
+
+- React
+- TypeScript
+- JavaScript
+- Vite
+- Node.js
+- Express
+
+### Validation
+
+- Project-specific validation
+- TypeScript/JavaScript build validation
+- Smoke testing
+- Deterministic safety checks
+
+---
+
+## Current status
+
+🚧 **Actively developing**
+
+The core enhancement workflow is operational and has been tested against real application codebases.
+
+Current focus areas include:
+
+- improving enhancement reliability
+- hardening patch application
+- reducing unnecessary Repair Agent calls
+- improving deterministic validation
+- real-world volume testing
+- improving model reliability for complex cross-file enhancements
+- deployment and API integration
+
+Some complex semantic UI enhancements can still be sensitive to the capabilities of the selected LLM. The architecture therefore treats model output as a proposal and relies on deterministic validation to prevent unsafe or falsely successful results.
+
+---
+
+## Key takeaway
+
+The project has evolved from:
+
+```text
+"How do I use LangGraph?"
+```
+
+into:
+
+```text
+"How do I build a reliable software-engineering workflow around an LLM?"
+```
+
+The central idea is:
+
+> **LLM = proposal.  
+> LangGraph = orchestration.  
+> Deterministic systems = authority.**
